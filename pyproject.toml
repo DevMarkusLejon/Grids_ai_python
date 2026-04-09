@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "grids-ai"
+version = "0.1.0"
+description = "A simplified Python recreation of Grids with a trainable AI."
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [
+  { name = "Codex" }
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["grids_ai*"]
