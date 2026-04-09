@@ -69,6 +69,7 @@ python -m grids_ai.cli --blue heuristic --red random
 ## Training
 
 The trainer uses dependency-free evolutionary self-play to improve the heuristic bot's evaluation weights. It samples candidate weight sets, plays matches, and keeps the best-performing policy.
+During training, the terminal now shows a live per-generation progress bar so long runs have visible feedback.
 
 Example:
 

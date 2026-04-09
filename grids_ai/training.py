@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import argparse
 import random
+import sys
 from typing import Sequence
 
 from .bots import DEFAULT_WEIGHTS, HeuristicBot, RandomBot, save_weights
@@ -86,6 +87,28 @@ def evaluate_candidate(
     return total
 
 
+def render_progress(
+    current: int,
+    total: int,
+    *,
+    generation: int,
+    generations: int,
+    width: int = 28,
+) -> None:
+    total = max(total, 1)
+    ratio = min(max(current / total, 0.0), 1.0)
+    filled = int(width * ratio)
+    bar = "#" * filled + "." * (width - filled)
+    message = (
+        f"\rTraining gen {generation}/{generations} "
+        f"[{bar}] {current}/{total}"
+    )
+    sys.stdout.write(message)
+    sys.stdout.flush()
+    if current == total:
+        sys.stdout.write("\n")
+
+
 def train(config: TrainingConfig) -> tuple[dict[str, float], list[tuple[int, float]]]:
     rng = random.Random(config.seed)
     champion = dict(DEFAULT_WEIGHTS)
@@ -96,6 +119,7 @@ def train(config: TrainingConfig) -> tuple[dict[str, float], list[tuple[int, flo
         best_candidate = champion
         best_score = champion_score
 
+        render_progress(0, config.population, generation=generation, generations=config.generations)
         for candidate_index in range(config.population):
             seed_offset = generation * 1000 + candidate_index
             candidate = mutated_weights(rng, champion, config.mutation_scale)
@@ -103,6 +127,12 @@ def train(config: TrainingConfig) -> tuple[dict[str, float], list[tuple[int, flo
             if score > best_score:
                 best_candidate = candidate
                 best_score = score
+            render_progress(
+                candidate_index + 1,
+                config.population,
+                generation=generation,
+                generations=config.generations,
+            )
 
         champion = best_candidate
         champion_score = best_score
