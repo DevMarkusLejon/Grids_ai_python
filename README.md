@@ -66,6 +66,17 @@ You can also run bot-vs-bot matches:
 python -m grids_ai.cli --blue heuristic --red random
 ```
 
+## Browser Version
+
+The browser prototype now lives in the repo at [`web/index.html`](./web/index.html). It is a static
+front-end version of the game with click-to-select and drag-and-drop controls.
+
+- Open `web/index.html` in a browser.
+- Click or drag blue hand cards onto highlighted targets.
+- Click or drag blue units to move, attack, or heal.
+- Use the control buttons to draw cards or end the turn.
+- The red side is controlled by an in-browser heuristic AI.
+
 To spectate more comfortably, add a delay between bot actions. In bot-vs-bot matches the CLI will
 refresh the screen with a cleaner spectator view instead of endlessly scrolling:
 

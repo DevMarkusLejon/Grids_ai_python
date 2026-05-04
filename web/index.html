@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Grids AI Browser</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <div class="page-shell">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">Taproom Table</p>
+        <h1>Grids AI Tactics</h1>
+        <p class="subtitle">A candlelit tavern board comes alive. Deploy your pieces, play enchanted cards, and outmaneuver the red-side challenger.</p>
+      </div>
+      <div class="turn-card" id="turn-card">
+        <span id="turn-label">Blue Turn</span>
+        <strong id="actions-label">7 AP</strong>
+      </div>
+    </header>
+
+    <main class="layout">
+      <aside class="panel panel-left">
+        <section class="panel-block">
+          <div class="panel-heading">
+            <h2>Command</h2>
+            <span id="map-label">Plains</span>
+          </div>
+          <div class="button-stack">
+            <button id="draw-unit-btn" class="action-btn">Draw Unit</button>
+            <button id="draw-item-btn" class="action-btn">Draw Item</button>
+            <button id="end-turn-btn" class="action-btn primary">End Turn</button>
+            <button id="reset-btn" class="action-btn ghost">New Match</button>
+          </div>
+          <p class="note">Tap a card or piece to study its move, or drag it like a tavern regular sliding tokens across a living board. Glowing cells mark where the magic can land.</p>
+        </section>
+
+        <section class="panel-block">
+          <div class="panel-heading">
+            <h2>Inspect</h2>
+            <span id="selection-kind">Nothing selected</span>
+          </div>
+          <div id="selection-card" class="selection-card empty">
+            <p>Select or start dragging a card or unit to preview its valid targets.</p>
+          </div>
+        </section>
+      </aside>
+
+      <section class="board-stage">
+        <div class="score-strip">
+          <article class="score-card blue">
+            <span>Blue Commander</span>
+            <strong id="blue-commander-hp">300 / 300</strong>
+          </article>
+          <article class="score-card red">
+            <span>Red Commander</span>
+            <strong id="red-commander-hp">300 / 300</strong>
+          </article>
+        </div>
+
+        <div class="board-frame">
+          <div id="board" class="board" aria-label="Game board"></div>
+        </div>
+
+        <section class="hand-panel">
+          <div class="panel-heading">
+            <h2>Blue Hand</h2>
+            <span id="hand-count">0 cards</span>
+          </div>
+          <div id="hand" class="hand-row"></div>
+        </section>
+      </section>
+
+      <aside class="panel panel-right">
+        <section class="panel-block">
+          <div class="panel-heading">
+            <h2>Status</h2>
+            <span id="winner-label">Match Active</span>
+          </div>
+          <div class="status-grid">
+            <div>
+              <span class="status-label">Blue Decks</span>
+              <strong id="blue-deck-counts">0 / 0</strong>
+            </div>
+            <div>
+              <span class="status-label">Red Decks</span>
+              <strong id="red-deck-counts">0 / 0</strong>
+            </div>
+            <div>
+              <span class="status-label">Turn</span>
+              <strong id="turn-number">1</strong>
+            </div>
+            <div>
+              <span class="status-label">Log Entries</span>
+              <strong id="log-count">0</strong>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel-block grow">
+          <div class="panel-heading">
+            <h2>Battle Log</h2>
+            <span>Taproom gossip</span>
+          </div>
+          <div id="log" class="log-list"></div>
+        </section>
+      </aside>
+    </main>
+  </div>
+
+  <script src="./app.js"></script>
+</body>
+</html>
