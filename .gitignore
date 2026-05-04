@@ -3,10 +3,12 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+*.egg-info/
 
 neural_data/
 training_logs/
 cloud_results/
+logs/
 
 checkpoints/long-*.json
 checkpoints/value_model*.json

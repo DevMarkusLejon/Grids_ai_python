@@ -12,6 +12,12 @@ authors = [
   { name = "Codex" }
 ]
 
+[project.optional-dependencies]
+neural = [
+  "numpy>=1.26",
+  "torch>=2.2",
+]
+
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["grids_ai*"]

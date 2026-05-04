@@ -12,7 +12,7 @@
       <div>
         <p class="eyebrow">Portfolio AI Showcase</p>
         <h1>Grids AI Tactics</h1>
-        <p class="subtitle">A browser-playable tactics game where heuristic and neural experiments drive autonomous agents on a compact grid battlefield.</p>
+        <p class="subtitle">A browser-playable tactics game where you can challenge the strongest local neural value model on a compact grid battlefield.</p>
       </div>
       <div class="turn-card" id="turn-card">
         <span id="turn-label">Blue Turn</span>
@@ -25,11 +25,11 @@
         <section class="panel-block">
           <div class="panel-heading">
             <h2>Mode</h2>
-            <span id="mode-label">AI vs AI</span>
+            <span id="mode-label">Human vs Neural</span>
           </div>
           <div class="mode-grid" role="group" aria-label="Match mode">
-            <button id="watch-ai-btn" class="action-btn primary" type="button">Watch AI</button>
-            <button id="play-blue-btn" class="action-btn ghost" type="button">Play Blue</button>
+            <button id="watch-ai-btn" class="action-btn ghost" type="button">Watch AI</button>
+            <button id="play-blue-btn" class="action-btn primary" type="button">Play Blue</button>
           </div>
           <div class="mode-grid compact" role="group" aria-label="Spectator controls">
             <button id="pause-btn" class="action-btn ghost" type="button">Pause</button>
@@ -111,11 +111,11 @@
             </div>
             <div>
               <span class="status-label">AI Search</span>
-              <strong id="ai-search-label">Beam 5</strong>
+              <strong id="ai-search-label">Neural value</strong>
             </div>
             <div>
               <span class="status-label">Match Mode</span>
-              <strong id="match-mode-label">AI vs AI</strong>
+              <strong id="match-mode-label">Human vs Neural</strong>
             </div>
           </div>
         </section>
@@ -131,6 +131,7 @@
     </main>
   </div>
 
+  <script src="./assets/models/strongest-value-model.js"></script>
   <script src="./app.js"></script>
 </body>
 </html>

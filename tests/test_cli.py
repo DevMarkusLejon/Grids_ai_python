@@ -12,6 +12,11 @@ class CliTests(unittest.TestCase):
         self.assertEqual(args.red, "random")
         self.assertEqual(args.delay, 0.25)
 
+    def test_parse_args_accepts_neural_model(self) -> None:
+        args = parse_args(["--blue", "human", "--red", "neural", "--model", "checkpoints/model.json"])
+        self.assertEqual(args.red, "neural")
+        self.assertEqual(args.model, "checkpoints/model.json")
+
     def test_build_bot_returns_none_for_human(self) -> None:
         self.assertIsNone(build_bot("human"))
 

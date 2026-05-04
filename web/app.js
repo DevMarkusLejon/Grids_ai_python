@@ -22,7 +22,7 @@
   };
 
   const UNIT_BLUEPRINTS = {
-    commander: { key: "commander", name: "Commander", glyph: "C", maxHp: 100, damage: 20, moveRange: 2, attackRange: 1, deployCost: 0, role: AttackRole.MELEE, canDeploy: false },
+    commander: { key: "commander", name: "Commander", glyph: "C", maxHp: 300, damage: 20, moveRange: 2, attackRange: 1, deployCost: 0, role: AttackRole.MELEE, canDeploy: false },
     warrior: { key: "warrior", name: "Warrior", glyph: "W", maxHp: 100, damage: 40, moveRange: 2, attackRange: 1, deployCost: 2, role: AttackRole.MELEE, canDeploy: true },
     archer: { key: "archer", name: "Archer", glyph: "A", maxHp: 80, damage: 20, moveRange: 2, attackRange: 4, deployCost: 2, role: AttackRole.RANGED, canDeploy: true },
     healer: { key: "healer", name: "Healer", glyph: "H", maxHp: 80, damage: 30, moveRange: 3, attackRange: 3, deployCost: 2, role: AttackRole.HEALER, canDeploy: true },
@@ -73,8 +73,13 @@
     maxHalfTurns: 80,
     aiSearchWidth: 5,
     aiSearchDepth: 8,
+    neuralScale: 120,
+    heuristicScale: 1,
     aiDelays: [720, 360, 140],
   };
+
+  const STRONGEST_VALUE_MODEL = window.GRIDS_STRONGEST_VALUE_MODEL || null;
+  const UNIT_KEYS = ["commander", "warrior", "archer", "healer", "assassin", "viking"];
 
   const DEFAULT_WEIGHTS = {
     bias: -0.7917604190523033,
@@ -277,6 +282,11 @@
   function commanderHp(state, side) {
     const commander = findCommander(state, side);
     return commander ? commander.hp : 0;
+  }
+
+  function commanderMaxHp(state, side) {
+    const commander = findCommander(state, side);
+    return commander ? unitMaxHp(commander) : UNIT_BLUEPRINTS.commander.maxHp;
   }
 
   function totalHp(state, side) {
@@ -781,7 +791,115 @@
     return score;
   }
 
-  function chooseAiAction(state) {
+  function cellIndex(state, x, y) {
+    return y * state.map.width + x;
+  }
+
+  function unitKindValue(unit) {
+    return (UNIT_KEYS.indexOf(unit.blueprintKey) + 1) / UNIT_KEYS.length;
+  }
+
+  function setEncodedCell(values, state, channel, x, y, value) {
+    const cells = state.map.width * state.map.height;
+    values[channel * cells + cellIndex(state, x, y)] = value;
+  }
+
+  function encodeStateVector(state) {
+    const cells = state.map.width * state.map.height;
+    const values = new Array(cells * 13).fill(0);
+
+    for (const key of state.map.blockers) {
+      const [x, y] = parseCoord(key);
+      setEncodedCell(values, state, 0, x, y, 1);
+    }
+    for (const key of state.map.blueDeploy) {
+      const [x, y] = parseCoord(key);
+      setEncodedCell(values, state, 1, x, y, 1);
+    }
+    for (const key of state.map.redDeploy) {
+      const [x, y] = parseCoord(key);
+      setEncodedCell(values, state, 2, x, y, 1);
+    }
+
+    for (const unit of state.units) {
+      const offset = unit.side === Side.BLUE ? 3 : 8;
+      setEncodedCell(values, state, offset, unit.x, unit.y, unitKindValue(unit));
+      setEncodedCell(values, state, offset + 1, unit.x, unit.y, Math.max(0, Math.min(1, unit.hp / Math.max(unitMaxHp(unit), 1))));
+      setEncodedCell(values, state, offset + 2, unit.x, unit.y, Math.max(0, Math.min(1, unitDamage(unit) / 100)));
+      setEncodedCell(values, state, offset + 3, unit.x, unit.y, unit.attackedThisTurn ? 1 : 0);
+      setEncodedCell(values, state, offset + 4, unit.x, unit.y, isCommander(unit) ? 1 : 0);
+    }
+
+    const maxHalfTurns = Math.max(CONFIG.maxHalfTurns, 1);
+    const maxActions = Math.max(CONFIG.maxActions, 1);
+    const maxHand = Math.max(CONFIG.maxHandSize, 1);
+    const maxUnitDeck = Math.max(state.unitDecks[Side.BLUE].length + state.hands[Side.BLUE].length, 1);
+    const maxItemDeck = Math.max(state.itemDecks[Side.BLUE].length + state.hands[Side.BLUE].length, 1);
+    return values.concat([
+      state.currentSide === Side.BLUE ? 1 : -1,
+      state.actionsLeft / maxActions,
+      Math.min(state.halfTurnsPlayed / maxHalfTurns, 1),
+      state.hands[Side.BLUE].length / maxHand,
+      state.hands[Side.RED].length / maxHand,
+      state.unitDecks[Side.BLUE].length / maxUnitDeck,
+      state.unitDecks[Side.RED].length / maxUnitDeck,
+      state.itemDecks[Side.BLUE].length / maxItemDeck,
+      state.itemDecks[Side.RED].length / maxItemDeck,
+      commanderHp(state, Side.BLUE) / Math.max(commanderMaxHp(state, Side.BLUE), 1),
+      commanderHp(state, Side.RED) / Math.max(commanderMaxHp(state, Side.RED), 1),
+      forwardPressure(state, Side.BLUE) / Math.max(state.map.width * 5, 1),
+      forwardPressure(state, Side.RED) / Math.max(state.map.width * 5, 1),
+      unitsForSide(state, Side.BLUE).length / 8,
+      unitsForSide(state, Side.RED).length / 8,
+    ]);
+  }
+
+  function predictValue(model, state) {
+    const inputs = encodeStateVector(state);
+    let output = model.b2 || 0;
+    for (let hiddenIndex = 0; hiddenIndex < model.hidden_size; hiddenIndex += 1) {
+      const row = model.w1[hiddenIndex];
+      let activation = model.b1[hiddenIndex] || 0;
+      for (let index = 0; index < inputs.length; index += 1) {
+        if (inputs[index]) {
+          activation += row[index] * inputs[index];
+        }
+      }
+      output += model.w2[hiddenIndex] * Math.tanh(activation);
+    }
+    return Math.tanh(output);
+  }
+
+  function predictStateForPlayer(model, state, player) {
+    if (state.winner) {
+      return state.winner === player ? 1 : -1;
+    }
+    const prediction = predictValue(model, state);
+    return state.currentSide === player ? prediction : -prediction;
+  }
+
+  function chooseNeuralAiAction(state) {
+    if (!STRONGEST_VALUE_MODEL) {
+      return chooseHeuristicAiAction(state);
+    }
+    const currentLegal = legalActions(state);
+    const player = state.currentSide;
+    const scored = currentLegal.map((action, index) => {
+      const simulated = cloneState(state);
+      const legal = legalActions(simulated).find((candidate) => actionsEqual(candidate, action));
+      if (!legal) {
+        return { score: Number.NEGATIVE_INFINITY, tie: -index, action };
+      }
+      applyAction(simulated, legal);
+      const heuristicScore = scoreAction(state, simulated, action, player);
+      const neuralScore = predictStateForPlayer(STRONGEST_VALUE_MODEL, simulated, player) * CONFIG.neuralScale;
+      return { score: heuristicScore * CONFIG.heuristicScale + neuralScore, tie: -index, action };
+    });
+    scored.sort((a, b) => b.score - a.score || b.tie - a.tie);
+    return scored[0]?.action || currentLegal[0];
+  }
+
+  function chooseHeuristicAiAction(state) {
     const currentLegal = legalActions(state);
     const player = state.currentSide;
     const decay = 0.92;
@@ -833,6 +951,13 @@
 
     paths.sort((a, b) => b.score - a.score || b.tie - a.tie);
     return paths[0]?.firstAction || currentLegal[0];
+  }
+
+  function chooseAiAction(state) {
+    if (state.currentSide === Side.RED) {
+      return chooseNeuralAiAction(state);
+    }
+    return chooseHeuristicAiAction(state);
   }
 
   function spriteSheetFor(side, blueprintKey) {
@@ -888,7 +1013,7 @@
     unitAnimations: new Map(),
     itemEffects: [],
     animationTimer: null,
-    mode: "watch",
+    mode: "play",
     paused: false,
     speedIndex: 0,
   };
@@ -1433,16 +1558,16 @@
     const visibleHandSide = app.mode === "watch" ? app.state.currentSide : Side.BLUE;
     dom.handCount.textContent = `${app.state.hands[visibleHandSide].length} cards`;
     dom.mapLabel.textContent = app.state.map.name;
-    dom.aiSearchLabel.textContent = `Beam ${CONFIG.aiSearchWidth}`;
-    dom.modeLabel.textContent = app.mode === "watch" ? "AI vs AI" : "Human vs AI";
-    dom.matchModeLabel.textContent = app.mode === "watch" ? "AI vs AI" : "Human vs AI";
+    dom.aiSearchLabel.textContent = STRONGEST_VALUE_MODEL ? "Red neural value" : `Beam ${CONFIG.aiSearchWidth}`;
+    dom.modeLabel.textContent = app.mode === "watch" ? "Heuristic vs Neural" : "Human vs Neural";
+    dom.matchModeLabel.textContent = app.mode === "watch" ? "Heuristic vs Neural" : "Human vs Neural";
 
     if (app.state.winner) {
       dom.winnerLabel.textContent = `${app.state.winner === Side.BLUE ? "Blue" : "Red"} wins`;
     } else if (app.paused) {
       dom.winnerLabel.textContent = "Paused";
     } else if (isAiControlled(app.state.currentSide)) {
-      dom.winnerLabel.textContent = "AI Thinking";
+      dom.winnerLabel.textContent = app.state.currentSide === Side.RED ? "Neural Thinking" : "AI Thinking";
     } else {
       dom.winnerLabel.textContent = "Match Active";
     }

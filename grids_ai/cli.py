@@ -7,25 +7,38 @@ import time
 
 from .bots import DEFAULT_WEIGHTS, HeuristicBot, RandomBot, load_weights
 from .engine import Action, GameState, new_game
+from .neural import NeuralValueBot, ValueNetwork
 
 
-def build_bot(name: str, weights_path: str | None = None):
+DEFAULT_NEURAL_MODEL = "checkpoints/value_model_torch_128_shaped_1000.json"
+
+
+def build_bot(name: str, weights_path: str | None = None, model_path: str | None = None):
     if name == "random":
         return RandomBot()
     if name == "heuristic":
         weights = load_weights(weights_path) if weights_path else dict(DEFAULT_WEIGHTS)
         return HeuristicBot(weights)
+    if name == "neural":
+        model = ValueNetwork.load(model_path or DEFAULT_NEURAL_MODEL)
+        fallback_weights = load_weights(weights_path) if weights_path else dict(DEFAULT_WEIGHTS)
+        return NeuralValueBot(model, fallback_weights=fallback_weights)
     return None
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Play the simplified Python version of Grids.")
-    parser.add_argument("--blue", default="human", choices=["human", "heuristic", "random"])
-    parser.add_argument("--red", default="heuristic", choices=["human", "heuristic", "random"])
+    parser.add_argument("--blue", default="human", choices=["human", "heuristic", "random", "neural"])
+    parser.add_argument("--red", default="heuristic", choices=["human", "heuristic", "random", "neural"])
     parser.add_argument("--map", default="plains", choices=["plains", "desert"])
     parser.add_argument("--seed", type=int, default=7)
     parser.add_argument("--delay", type=float, default=0.0, help="Pause in seconds between bot actions.")
     parser.add_argument("--weights", help="Optional JSON file containing heuristic weights.")
+    parser.add_argument(
+        "--model",
+        default=DEFAULT_NEURAL_MODEL,
+        help="Neural value model JSON used when either side is controlled by --blue/--red neural.",
+    )
     return parser.parse_args(argv)
 
 
@@ -160,8 +173,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.delay < 0:
         raise SystemExit("--delay must be at least 0.")
     state = new_game(seed=args.seed, map_name=args.map)
-    blue_bot = build_bot(args.blue, args.weights)
-    red_bot = build_bot(args.red, args.weights)
+    blue_bot = build_bot(args.blue, args.weights, args.model)
+    red_bot = build_bot(args.red, args.weights, args.model)
     controllers = {"blue": blue_bot, "red": red_bot}
     spectator_mode = blue_bot is not None and red_bot is not None
 

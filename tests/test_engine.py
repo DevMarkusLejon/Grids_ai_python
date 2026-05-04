@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 
 from grids_ai.bots import DEFAULT_WEIGHTS, HeuristicBot
-from grids_ai.data import Card, CardKind, Side
+from grids_ai.data import Card, CardKind, DEFAULT_ITEM_DECK, DEFAULT_UNIT_DECK, Side, UNIT_BLUEPRINTS
 from grids_ai.engine import Action, new_game
 
 
@@ -15,6 +15,18 @@ class GameStateTests(unittest.TestCase):
         self.assertEqual(len(state.hands[Side.BLUE]), 5)
         self.assertEqual(len(state.hands[Side.RED]), 5)
         self.assertEqual(state.actions_left, 7)
+        self.assertEqual(state.commander(Side.BLUE).hp, 300)
+        self.assertEqual(state.commander(Side.RED).hp, 300)
+
+    def test_new_game_uses_complete_decks_for_both_sides(self) -> None:
+        state = new_game(seed=1)
+        for side in (Side.BLUE, Side.RED):
+            unit_cards_in_hand = sum(1 for card in state.hands[side] if card.kind is CardKind.UNIT)
+            item_cards_in_hand = sum(1 for card in state.hands[side] if card.kind is CardKind.ITEM)
+
+            self.assertEqual(len(state.unit_decks[side]) + unit_cards_in_hand, len(DEFAULT_UNIT_DECK))
+            self.assertEqual(len(state.item_decks[side]) + item_cards_in_hand, len(DEFAULT_ITEM_DECK))
+        self.assertEqual(UNIT_BLUEPRINTS["commander"].max_hp, 300)
 
     def test_deploy_consumes_ap_and_places_unit(self) -> None:
         state = new_game(seed=1)

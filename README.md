@@ -68,6 +68,25 @@ You can also run bot-vs-bot matches:
 python -m grids_ai.cli --blue heuristic --red random
 ```
 
+Play against the strongest local neural model:
+
+```bash
+scripts\play_strongest.cmd
+```
+
+Or run it directly:
+
+```bash
+python -m grids_ai.cli --blue human --red neural --model checkpoints/value_model_torch_128_shaped_1000.json
+```
+
+To play the browser version against the same exported neural model, serve the static site and open
+`http://127.0.0.1:8765/web/`:
+
+```bash
+scripts\serve_web.cmd
+```
+
 ## Browser Version
 
 The browser prototype now lives in the repo at [`web/index.html`](./web/index.html). It is a static
@@ -154,9 +173,19 @@ python -m grids_ai.cli --blue human --red heuristic --weights trained_weights.js
 
 ## Neural Value Experiments
 
-The first neural layer is intentionally small and dependency-free so it works on plain Python. It
-uses the current heuristic/planner to generate self-play states, trains a compact tanh MLP to predict
-the eventual winner from each side-to-move position, and can use that model as a value evaluator.
+The neural pipeline uses the current heuristic/planner to generate self-play states, trains a compact
+tanh MLP to predict the eventual winner from each side-to-move position, and can use that model as a
+value evaluator. The trainer has three backends:
+
+- `torch`: PyTorch mini-batch Adam training, preferred when installed.
+- `numpy`: NumPy mini-batch Adam training, useful when PyTorch is not available.
+- `python`: dependency-free sparse Python training, slower but always available.
+
+Install the accelerated neural dependencies with:
+
+```bash
+pip install -e ".[neural]"
+```
 
 Inspect the encoder dimensions:
 
@@ -170,10 +199,31 @@ Generate a small self-play dataset:
 python -m grids_ai.neural generate --weights checkpoints/run.latest.json --games 20 --output neural_data/selfplay.jsonl
 ```
 
+Generate a richer dataset with shaped targets and mild teacher exploration. This makes labels less
+binary than raw win/loss and exposes the model to more varied positions:
+
+```bash
+python -m grids_ai.neural generate --target shaped --exploration-rate 0.03 --sampling-top-k 3 --sampling-temperature 25 --weights trained_weights.json --games 1000 --workers 5 --output neural_data/selfplay_shaped.jsonl
+```
+
 Train a value model:
 
 ```bash
 python -m grids_ai.neural train --data neural_data/selfplay.jsonl --model checkpoints/value_model.json --epochs 8
+```
+
+Training keeps a deterministic validation holdout by default and saves the best validation epoch.
+Use early stopping to stop runs that are no longer improving on held-out positions:
+
+```bash
+python -m grids_ai.neural train --backend torch --hidden-size 128 --batch-size 512 --validation-fraction 0.1 --early-stop-patience 5 --data neural_data/selfplay.jsonl --model checkpoints/value_model.json --epochs 80
+```
+
+Train explicitly with PyTorch or NumPy:
+
+```bash
+python -m grids_ai.neural train --backend torch --batch-size 512 --data neural_data/selfplay.jsonl --model checkpoints/value_model.json --epochs 8
+python -m grids_ai.neural train --backend numpy --batch-size 512 --data neural_data/selfplay.jsonl --model checkpoints/value_model.json --epochs 8
 ```
 
 Smoke-test the neural value bot against random play:
@@ -182,9 +232,16 @@ Smoke-test the neural value bot against random play:
 python -m grids_ai.neural evaluate --model checkpoints/value_model.json --games 8 --weights checkpoints/run.latest.json
 ```
 
+Run a harder paired-side gauntlet against random, planner heuristics, trained heuristic weights,
+and discovered older neural checkpoints:
+
+```bash
+python -m grids_ai.neural gauntlet --model checkpoints/value_model_torch_128.json --games 8 --weights trained_weights.json --output training_logs/value_model_torch_128.gauntlet.json
+```
+
 This is not an AlphaZero system yet. It is the first reusable pipeline piece: stable encodings,
-self-play data, model checkpoints, and a neural value evaluator that can later be replaced by a
-PyTorch CNN or policy/value network.
+self-play data, model checkpoints, accelerated value training, and a neural value evaluator that can
+later grow into a CNN or policy/value network.
 
 For longer runs on a remote machine, see [`cloud/README.md`](./cloud/README.md). The current cloud
 setup is CPU-first and parallelizes self-play with `--workers`; GPU rental becomes more useful once
