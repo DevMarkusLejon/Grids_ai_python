@@ -4,6 +4,8 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 *.egg-info/
+.env
+local_notify_config.ps1
 
 neural_data/
 training_logs/

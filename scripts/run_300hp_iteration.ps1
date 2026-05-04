@@ -8,6 +8,7 @@ $LogDir = Join-Path $Root "logs"
 $DataPath = "neural_data/selfplay_shaped_1500_300hp_$Stamp.jsonl"
 $ModelPath = "checkpoints/value_model_torch_192_shaped_1500_300hp_$Stamp.json"
 $ReportPath = "reports/gauntlet_300hp_192_shaped_1500_$Stamp.json"
+$NotifyScript = Join-Path $PSScriptRoot "notify_important.ps1"
 
 New-Item -ItemType Directory -Force -Path $LogDir, "neural_data", "checkpoints", "reports" | Out-Null
 
@@ -48,3 +49,9 @@ python -m grids_ai.neural gauntlet `
   --no-auto-opponents
 
 Write-Host "[$(Get-Date -Format o)] Finished 300 HP iteration"
+
+& $NotifyScript `
+  -Title "Grids AI run finished" `
+  -Message "Finished 300 HP iteration. Model: $ModelPath Report: $ReportPath" `
+  -Priority high `
+  -Tags "chart_with_upwards_trend"
