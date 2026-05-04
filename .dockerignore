@@ -1,0 +1,10 @@
+.git
+__pycache__/
+*.pyc
+.pytest_cache/
+training_logs/
+neural_data/
+checkpoints/long-*.json
+checkpoints/value_model*.json
+checkpoints/value_model_*.json
+web/assets/

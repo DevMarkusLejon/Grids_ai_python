@@ -3,16 +3,16 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Grids AI Browser</title>
+  <title>Grids AI Tactics - Autonomous Board Game AI</title>
   <link rel="stylesheet" href="./styles.css">
 </head>
 <body>
   <div class="page-shell">
     <header class="topbar">
       <div>
-        <p class="eyebrow">Taproom Table</p>
+        <p class="eyebrow">Portfolio AI Showcase</p>
         <h1>Grids AI Tactics</h1>
-        <p class="subtitle">A candlelit tavern board comes alive. Deploy your pieces, play enchanted cards, and outmaneuver the red-side challenger.</p>
+        <p class="subtitle">A browser-playable tactics game where heuristic and neural experiments drive autonomous agents on a compact grid battlefield.</p>
       </div>
       <div class="turn-card" id="turn-card">
         <span id="turn-label">Blue Turn</span>
@@ -24,6 +24,21 @@
       <aside class="panel panel-left">
         <section class="panel-block">
           <div class="panel-heading">
+            <h2>Mode</h2>
+            <span id="mode-label">AI vs AI</span>
+          </div>
+          <div class="mode-grid" role="group" aria-label="Match mode">
+            <button id="watch-ai-btn" class="action-btn primary" type="button">Watch AI</button>
+            <button id="play-blue-btn" class="action-btn ghost" type="button">Play Blue</button>
+          </div>
+          <div class="mode-grid compact" role="group" aria-label="Spectator controls">
+            <button id="pause-btn" class="action-btn ghost" type="button">Pause</button>
+            <button id="speed-btn" class="action-btn ghost" type="button">Speed 1x</button>
+          </div>
+        </section>
+
+        <section class="panel-block">
+          <div class="panel-heading">
             <h2>Command</h2>
             <span id="map-label">Plains</span>
           </div>
@@ -33,7 +48,6 @@
             <button id="end-turn-btn" class="action-btn primary">End Turn</button>
             <button id="reset-btn" class="action-btn ghost">New Match</button>
           </div>
-          <p class="note">Tap a card or piece to study its move, or drag it like a tavern regular sliding tokens across a living board. Glowing cells mark where the magic can land.</p>
         </section>
 
         <section class="panel-block">
@@ -65,7 +79,7 @@
 
         <section class="hand-panel">
           <div class="panel-heading">
-            <h2>Blue Hand</h2>
+            <h2 id="hand-title">Blue Hand</h2>
             <span id="hand-count">0 cards</span>
           </div>
           <div id="hand" class="hand-row"></div>
@@ -94,6 +108,14 @@
             <div>
               <span class="status-label">Log Entries</span>
               <strong id="log-count">0</strong>
+            </div>
+            <div>
+              <span class="status-label">AI Search</span>
+              <strong id="ai-search-label">Beam 5</strong>
+            </div>
+            <div>
+              <span class="status-label">Match Mode</span>
+              <strong id="match-mode-label">AI vs AI</strong>
             </div>
           </div>
         </section>

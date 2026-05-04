@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import argparse
 import random
 from statistics import pstdev
@@ -24,6 +24,7 @@ TIMEOUT_PENALTY = 0.75
 CONSISTENCY_WEIGHT = 0.20
 MARGIN_SCALE = 200.0
 RANDOM_OPPONENT_WEIGHT = 0.5
+FIXED_TRAINING_WEIGHTS = frozenset({"win", "loss"})
 
 
 @dataclass(frozen=True)
@@ -43,6 +44,11 @@ class TrainingConfig:
     verbose_every: int = 25
     early_stop_patience: int | None = None
     early_stop_min_delta: float = 0.0
+    promotion_margin: float = 0.05
+    holdout_games: int = 1
+    use_fixed_benchmarks: bool = True
+    ai_search_width: int = 1
+    ai_search_depth: int | None = None
 
 
 @dataclass(frozen=True)
@@ -61,8 +67,68 @@ def mutated_weights(
 ) -> dict[str, float]:
     mutated: dict[str, float] = {}
     for key, value in base_weights.items():
+        if key in FIXED_TRAINING_WEIGHTS:
+            mutated[key] = value
+            continue
         mutated[key] = value + rng.gauss(0.0, mutation_scale)
     return mutated
+
+
+def make_heuristic_bot(weights: dict[str, float], seed: int, config: TrainingConfig) -> HeuristicBot:
+    return HeuristicBot(
+        weights,
+        seed=seed,
+        search_width=config.ai_search_width,
+        search_depth=config.ai_search_depth,
+    )
+
+
+def archetype_benchmarks() -> list[dict[str, float]]:
+    rush = dict(DEFAULT_WEIGHTS)
+    rush.update(
+        {
+            "enemy_commander_delta": 22.0,
+            "commander_distance_delta": 9.0,
+            "enemy_commander_threat_delta": 4.0,
+            "lethal_threat": 260.0,
+            "forward_pressure_delta": 4.5,
+            "draw_item": 2.5,
+            "move": 4.0,
+        }
+    )
+
+    material = dict(DEFAULT_WEIGHTS)
+    material.update(
+        {
+            "enemy_unit_delta": 70.0,
+            "own_unit_delta": -72.0,
+            "enemy_unit_value_delta": 0.55,
+            "own_unit_value_delta": -0.65,
+            "deploy": 9.0,
+            "hand_delta": 1.5,
+        }
+    )
+
+    defensive = dict(DEFAULT_WEIGHTS)
+    defensive.update(
+        {
+            "own_commander_delta": -28.0,
+            "own_commander_threat_delta": -5.0,
+            "own_lethal_risk": -340.0,
+            "effective_healing": 3.0,
+            "heal": 7.0,
+            "forward_pressure_delta": 0.5,
+        }
+    )
+
+    return [rush, material, defensive]
+
+
+def benchmark_weight_pool(champion_pool: Sequence[dict[str, float]], config: TrainingConfig) -> list[dict[str, float]]:
+    benchmarks = [dict(weights) for weights in champion_pool]
+    if config.use_fixed_benchmarks:
+        benchmarks.extend(archetype_benchmarks())
+    return benchmarks
 
 
 def play_match(
@@ -221,8 +287,8 @@ def evaluate_candidate(
             sampled_steps: list[tuple[int, int, int]] = []
 
             blue_vs_bench = play_match(
-                HeuristicBot(candidate_weights, seed=benchmark_seed),
-                HeuristicBot(benchmark_weights, seed=benchmark_seed + 1),
+                make_heuristic_bot(candidate_weights, benchmark_seed, config),
+                make_heuristic_bot(benchmark_weights, benchmark_seed + 1, config),
                 seed=benchmark_seed,
                 map_name=config.map_name,
                 on_step=(
@@ -253,8 +319,8 @@ def evaluate_candidate(
             verbose_match = should_verbose_match(config, match_index)
             sampled_steps = []
             red_vs_bench = play_match(
-                HeuristicBot(benchmark_weights, seed=benchmark_seed + 2),
-                HeuristicBot(candidate_weights, seed=benchmark_seed + 3),
+                make_heuristic_bot(benchmark_weights, benchmark_seed + 2, config),
+                make_heuristic_bot(candidate_weights, benchmark_seed + 3, config),
                 seed=benchmark_seed + 1000,
                 map_name=config.map_name,
                 on_step=(
@@ -286,7 +352,7 @@ def evaluate_candidate(
         verbose_match = should_verbose_match(config, match_index)
         sampled_steps = []
         blue_vs_random = play_match(
-            HeuristicBot(candidate_weights, seed=random_seed),
+            make_heuristic_bot(candidate_weights, random_seed, config),
             RandomBot(seed=random_seed + 1),
             seed=random_seed + 2000,
             map_name=config.map_name,
@@ -319,7 +385,7 @@ def evaluate_candidate(
         sampled_steps = []
         red_vs_random = play_match(
             RandomBot(seed=random_seed + 2),
-            HeuristicBot(candidate_weights, seed=random_seed + 3),
+            make_heuristic_bot(candidate_weights, random_seed + 3, config),
             seed=random_seed + 3000,
             map_name=config.map_name,
             on_step=(
@@ -402,6 +468,11 @@ def build_training_metadata(
         "verbose_every": config.verbose_every,
         "early_stop_patience": config.early_stop_patience,
         "early_stop_min_delta": config.early_stop_min_delta,
+        "promotion_margin": config.promotion_margin,
+        "holdout_games": config.holdout_games,
+        "use_fixed_benchmarks": config.use_fixed_benchmarks,
+        "ai_search_width": config.ai_search_width,
+        "ai_search_depth": config.ai_search_depth,
         "resume_from": config.resume_from_path,
         "benchmark_count": benchmark_count,
         "max_score": max_score,
@@ -507,23 +578,25 @@ def train(config: TrainingConfig) -> TrainingResult:
         champion.update(config.starting_weights)
     champion_pool: list[dict[str, float]] = [dict(champion)]
     history: list[tuple[int, float]] = []
-    champion_score = evaluate_candidate(champion, champion_pool, config, seed_offset=0)
+    evaluation_pool = benchmark_weight_pool(champion_pool, config)
+    champion_score = evaluate_candidate(champion, evaluation_pool, config, seed_offset=0)
     stopped_early = False
     generations_without_improvement = 0
-    score_ceiling = max_candidate_score(config, len(champion_pool))
+    score_ceiling = max_candidate_score(config, len(evaluation_pool))
 
     for generation in range(1, config.generations + 1):
         generation_started = time.perf_counter()
-        previous_score = champion_score
+        evaluation_pool = benchmark_weight_pool(champion_pool, config)
+        eval_seed_offset = generation * 1000
+        previous_score = evaluate_candidate(champion, evaluation_pool, config, eval_seed_offset)
         best_candidate = champion
-        best_score = champion_score
+        best_score = previous_score
 
         render_progress(0, config.population, generation=generation, generations=config.generations)
         for candidate_index in range(config.population):
-            seed_offset = generation * 1000 + candidate_index
             candidate = mutated_weights(rng, champion, config.mutation_scale)
-            score = evaluate_candidate(candidate, champion_pool, config, seed_offset)
-            if score > best_score:
+            score = evaluate_candidate(candidate, evaluation_pool, config, eval_seed_offset)
+            if score > best_score + config.promotion_margin:
                 best_candidate = candidate
                 best_score = score
             render_progress(
@@ -534,6 +607,16 @@ def train(config: TrainingConfig) -> TrainingResult:
             )
 
         champion_improved = best_candidate is not champion
+        if champion_improved and config.holdout_games > 0:
+            holdout_config = replace(config, games_per_candidate=config.holdout_games)
+            holdout_pool = benchmark_weight_pool(champion_pool, holdout_config)
+            holdout_seed_offset = generation * 1000 + 777
+            champion_holdout = evaluate_candidate(champion, holdout_pool, holdout_config, holdout_seed_offset)
+            candidate_holdout = evaluate_candidate(best_candidate, holdout_pool, holdout_config, holdout_seed_offset)
+            if candidate_holdout <= champion_holdout + config.promotion_margin:
+                best_candidate = champion
+                best_score = previous_score
+                champion_improved = False
         score_improvement = best_score - previous_score
         champion = best_candidate
         champion_score = best_score
@@ -544,7 +627,8 @@ def train(config: TrainingConfig) -> TrainingResult:
             generations_without_improvement = 0
         else:
             generations_without_improvement += 1
-        score_ceiling = max_candidate_score(config, len(champion_pool))
+        evaluation_pool = benchmark_weight_pool(champion_pool, config)
+        score_ceiling = max_candidate_score(config, len(evaluation_pool))
         history.append((generation, champion_score))
         print(
             format_generation_summary(
@@ -570,7 +654,7 @@ def train(config: TrainingConfig) -> TrainingResult:
             config,
             champion,
             history=history,
-            benchmark_count=len(champion_pool),
+            benchmark_count=len(evaluation_pool),
             max_score=score_ceiling,
             stopped_early=stopped_early,
         )
@@ -591,7 +675,7 @@ def train(config: TrainingConfig) -> TrainingResult:
     return TrainingResult(
         champion=champion,
         history=history,
-        benchmark_count=len(champion_pool),
+        benchmark_count=len(evaluation_pool),
         max_score=score_ceiling,
         stopped_early=stopped_early,
     )
@@ -635,6 +719,34 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default=0.01,
         help="Minimum champion score improvement required to reset patience.",
     )
+    parser.add_argument(
+        "--promotion-margin",
+        type=float,
+        default=0.05,
+        help="Minimum paired-seed score gain required before a candidate can replace the champion.",
+    )
+    parser.add_argument(
+        "--holdout-games",
+        type=int,
+        default=1,
+        help="Extra held-out games used to confirm a candidate promotion. Use 0 to disable.",
+    )
+    parser.add_argument(
+        "--no-fixed-benchmarks",
+        action="store_true",
+        help="Evaluate only against the rolling champion pool and random bot.",
+    )
+    parser.add_argument(
+        "--ai-search-width",
+        type=int,
+        default=1,
+        help="Beam width used by heuristic bots during training. 1 keeps greedy training speed.",
+    )
+    parser.add_argument(
+        "--ai-search-depth",
+        type=int,
+        help="Maximum number of same-turn actions explored by training bots.",
+    )
     parser.add_argument("--resume-from", help="Optional JSON weights file to continue training from.")
     parser.add_argument("--output", default="trained_weights.json")
     return parser.parse_args(argv)
@@ -652,6 +764,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         raise SystemExit("--early-stop-patience must be at least 1.")
     if args.early_stop_min_delta < 0.0:
         raise SystemExit("--early-stop-min-delta must be non-negative.")
+    if args.promotion_margin < 0.0:
+        raise SystemExit("--promotion-margin must be non-negative.")
+    if args.holdout_games < 0:
+        raise SystemExit("--holdout-games must be non-negative.")
+    if args.ai_search_width < 1:
+        raise SystemExit("--ai-search-width must be at least 1.")
+    if args.ai_search_depth is not None and args.ai_search_depth < 1:
+        raise SystemExit("--ai-search-depth must be at least 1.")
     starting_weights = load_weights(args.resume_from) if args.resume_from else None
     config = TrainingConfig(
         generations=args.generations,
@@ -669,6 +789,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         verbose_every=args.verbose_every,
         early_stop_patience=args.early_stop_patience,
         early_stop_min_delta=args.early_stop_min_delta,
+        promotion_margin=args.promotion_margin,
+        holdout_games=args.holdout_games,
+        use_fixed_benchmarks=not args.no_fixed_benchmarks,
+        ai_search_width=args.ai_search_width,
+        ai_search_depth=args.ai_search_depth,
     )
     print("Training started.")
     result = train(config)

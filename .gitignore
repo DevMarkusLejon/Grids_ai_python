@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+neural_data/
+training_logs/
+cloud_results/
+
+checkpoints/long-*.json
+checkpoints/value_model*.json
+checkpoints/value_model_*.json
+
+.DS_Store
+Thumbs.db

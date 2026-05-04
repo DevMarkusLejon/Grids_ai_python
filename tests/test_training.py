@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import random
 from unittest.mock import patch
 import unittest
 
@@ -12,6 +13,7 @@ from grids_ai.training import (
     evaluate_candidate,
     match_score,
     max_candidate_score,
+    mutated_weights,
     parse_args,
     train,
 )
@@ -43,6 +45,11 @@ class TrainingTests(unittest.TestCase):
         self.assertEqual(args.checkpoint_every, 3)
         self.assertEqual(args.output, "next.json")
 
+    def test_mutation_keeps_terminal_outcomes_fixed(self) -> None:
+        mutated = mutated_weights(random.Random(1), dict(DEFAULT_WEIGHTS), mutation_scale=50.0)
+        self.assertEqual(mutated["win"], DEFAULT_WEIGHTS["win"])
+        self.assertEqual(mutated["loss"], DEFAULT_WEIGHTS["loss"])
+
     def test_train_can_start_from_supplied_weights(self) -> None:
         starting = dict(DEFAULT_WEIGHTS)
         starting["attack"] += 9.5
@@ -55,6 +62,7 @@ class TrainingTests(unittest.TestCase):
                 mutation_scale=0.5,
                 seed=3,
                 starting_weights=starting,
+                use_fixed_benchmarks=False,
             )
         )
 
@@ -70,6 +78,7 @@ class TrainingTests(unittest.TestCase):
                 mutation_scale=0.5,
                 seed=3,
                 starting_weights={"attack": 42.0},
+                use_fixed_benchmarks=False,
             )
         )
 
@@ -192,6 +201,8 @@ class TrainingTests(unittest.TestCase):
             seed=3,
             checkpoint_prefix="checkpoints/run",
             checkpoint_every=2,
+            use_fixed_benchmarks=False,
+            holdout_games=0,
         )
 
         with patch("grids_ai.training.save_weights") as save_mock:
@@ -220,6 +231,8 @@ class TrainingTests(unittest.TestCase):
             seed=3,
             checkpoint_prefix="checkpoints/early",
             checkpoint_every=1,
+            use_fixed_benchmarks=False,
+            holdout_games=0,
         )
         ceiling = max_candidate_score(config, benchmark_count=1)
 
@@ -235,7 +248,14 @@ class TrainingTests(unittest.TestCase):
         self.assertTrue(save_mock.call_args_list[0].kwargs["metadata"]["stopped_early"])
 
     def test_train_stops_early_at_max_score(self) -> None:
-        config = TrainingConfig(generations=5, population=1, games_per_candidate=2, seed=3)
+        config = TrainingConfig(
+            generations=5,
+            population=1,
+            games_per_candidate=2,
+            seed=3,
+            use_fixed_benchmarks=False,
+            holdout_games=0,
+        )
         ceiling = max_candidate_score(config, benchmark_count=1)
 
         with patch("grids_ai.training.evaluate_candidate", return_value=ceiling):

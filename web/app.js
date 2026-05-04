@@ -71,27 +71,40 @@
     drawCostUnit: 1,
     drawCostItem: 1,
     maxHalfTurns: 80,
+    aiSearchWidth: 5,
+    aiSearchDepth: 8,
+    aiDelays: [720, 360, 140],
   };
 
   const DEFAULT_WEIGHTS = {
-    bias: 0,
-    enemyCommanderDelta: 14,
-    ownCommanderDelta: -16,
-    enemyUnitDelta: 48,
-    ownUnitDelta: -52,
-    enemyTotalHpDelta: 1.7,
-    ownTotalHpDelta: -1.3,
-    forwardPressureDelta: 2,
-    handDelta: 0.8,
-    deploy: 6,
-    move: 1,
-    attack: 4,
-    heal: 3.5,
-    item: 3,
-    drawUnit: 1.8,
-    drawItem: 1,
-    endTurn: -2.5,
-    remainingAp: 0.2,
+    bias: -0.7917604190523033,
+    enemyCommanderDelta: 12.774282754309496,
+    ownCommanderDelta: -21.48864176598216,
+    enemyUnitDelta: 47.81908068985808,
+    ownUnitDelta: -53.45474315105486,
+    enemyTotalHpDelta: 6.021867223547596,
+    ownTotalHpDelta: -3.26455564572877,
+    enemyUnitValueDelta: 0.2,
+    ownUnitValueDelta: -0.25,
+    forwardPressureDelta: 4.540340913863352,
+    commanderDistanceDelta: 5,
+    enemyCommanderThreatDelta: 2.2,
+    ownCommanderThreatDelta: -2.8,
+    lethalThreat: 180,
+    ownLethalRisk: -220,
+    moveEnablesAttack: 16,
+    effectiveHealing: 1.6,
+    overkillDamage: -0.35,
+    handDelta: 4.869740324800604,
+    deploy: 5.089783031748675,
+    move: 6.987327891951255,
+    attack: 0.3039665044590707,
+    heal: -2.649448948095257,
+    item: 4.64289201489151,
+    drawUnit: 6.034211969542737,
+    drawItem: 2.3666803449055154,
+    endTurn: -4.267859011069304,
+    remainingAp: -0.33929613525688956,
     win: 10000,
     loss: -10000,
   };
@@ -401,6 +414,109 @@
     }, 0);
   }
 
+  function unitValue(unit) {
+    if (isCommander(unit)) {
+      return 420 + unit.hp;
+    }
+    const blueprint = blueprintForUnit(unit);
+    return unitMaxHp(unit) * 0.35 + unit.hp * 0.25 + unitDamage(unit) * 1.4 + blueprint.moveRange * 5 + blueprint.attackRange * 6;
+  }
+
+  function totalUnitValue(state, side) {
+    return unitsForSide(state, side).reduce((sum, unit) => sum + unitValue(unit), 0);
+  }
+
+  function commanderDistance(state, side) {
+    const enemyCommander = findCommander(state, Side.other(side));
+    if (!enemyCommander) {
+      return 0;
+    }
+    const distances = unitsForSide(state, side)
+      .filter((unit) => !isCommander(unit))
+      .map((unit) => distance([unit.x, unit.y], [enemyCommander.x, enemyCommander.y]));
+    return distances.length ? Math.min(...distances) : state.map.width + state.map.height;
+  }
+
+  function commanderThreat(state, attackerSide, defenderSide) {
+    const commander = findCommander(state, defenderSide);
+    if (!commander) {
+      return 0;
+    }
+    const attacks = [];
+    for (const unit of unitsForSide(state, attackerSide)) {
+      if (unitRole(unit) === AttackRole.HEALER || unit.attackedThisTurn) {
+        continue;
+      }
+      if (attackInRange(unit, commander)) {
+        attacks.push(unitDamage(unit));
+      }
+    }
+    for (const card of state.hands[attackerSide]) {
+      if (card.kind !== CardKind.ITEM) {
+        continue;
+      }
+      const item = ITEM_BLUEPRINTS[card.key];
+      if (item.effect === "damage_enemy" && state.actionsLeft >= item.cost) {
+        attacks.push(item.power);
+      }
+    }
+    return attacks.sort((a, b) => b - a).slice(0, Math.max(state.actionsLeft, 0)).reduce((sum, value) => sum + value, 0);
+  }
+
+  function moveEnablesAttack(before, after, action, player) {
+    if (action.kind !== "move") {
+      return false;
+    }
+    const beforeUnit = before.units.find((unit) => unit.unitId === action.unitId);
+    const afterUnit = after.units.find((unit) => unit.unitId === action.unitId);
+    if (!beforeUnit || !afterUnit || unitRole(beforeUnit) === AttackRole.HEALER || beforeUnit.attackedThisTurn) {
+      return false;
+    }
+    return unitsForSide(after, Side.other(player)).some((enemy) => attackInRange(afterUnit, enemy));
+  }
+
+  function effectiveHealing(before, after, action) {
+    if (action.kind !== "attack") {
+      return 0;
+    }
+    const attacker = before.units.find((unit) => unit.unitId === action.unitId);
+    if (!attacker || unitRole(attacker) !== AttackRole.HEALER) {
+      return 0;
+    }
+    const beforeTarget = before.units.find((unit) => unit.unitId === action.targetUnitId);
+    const afterTarget = after.units.find((unit) => unit.unitId === action.targetUnitId);
+    if (!beforeTarget || !afterTarget) {
+      return 0;
+    }
+    return Math.max(0, afterTarget.hp - beforeTarget.hp);
+  }
+
+  function overkillDamage(before, action) {
+    const target = before.units.find((unit) => unit.unitId === action.targetUnitId);
+    if (!target) {
+      return 0;
+    }
+    let damage = 0;
+    if (action.kind === "attack") {
+      const attacker = before.units.find((unit) => unit.unitId === action.unitId);
+      if (!attacker || unitRole(attacker) === AttackRole.HEALER) {
+        return 0;
+      }
+      damage = unitDamage(attacker);
+    } else if (action.kind === "play_item") {
+      const card = before.hands[before.currentSide][action.handIndex];
+      if (!card || card.kind !== CardKind.ITEM) {
+        return 0;
+      }
+      const item = ITEM_BLUEPRINTS[card.key];
+      if (item.effect !== "damage_enemy") {
+        return 0;
+      }
+      damage = item.power;
+    }
+    return Math.max(0, damage - target.hp);
+  }
+
   function legalActions(state) {
     if (state.winner) {
       return [];
@@ -613,6 +729,12 @@
 
   function features(before, after, action, player) {
     const enemy = Side.other(player);
+    const beforeEnemyThreat = commanderThreat(before, player, enemy);
+    const afterEnemyThreat = commanderThreat(after, player, enemy);
+    const beforeOwnThreat = commanderThreat(before, enemy, player);
+    const afterOwnThreat = commanderThreat(after, enemy, player);
+    const afterEnemyCommanderHp = commanderHp(after, enemy);
+    const afterOwnCommanderHp = commanderHp(after, player);
     return {
       bias: 1,
       enemyCommanderDelta: commanderHp(before, enemy) - commanderHp(after, enemy),
@@ -621,7 +743,17 @@
       ownUnitDelta: unitsForSide(before, player).length - unitsForSide(after, player).length,
       enemyTotalHpDelta: totalHp(before, enemy) - totalHp(after, enemy),
       ownTotalHpDelta: totalHp(before, player) - totalHp(after, player),
+      enemyUnitValueDelta: totalUnitValue(before, enemy) - totalUnitValue(after, enemy),
+      ownUnitValueDelta: totalUnitValue(before, player) - totalUnitValue(after, player),
       forwardPressureDelta: forwardPressure(after, player) - forwardPressure(before, player),
+      commanderDistanceDelta: commanderDistance(before, player) - commanderDistance(after, player),
+      enemyCommanderThreatDelta: afterEnemyThreat - beforeEnemyThreat,
+      ownCommanderThreatDelta: afterOwnThreat - beforeOwnThreat,
+      lethalThreat: !after.winner && afterEnemyThreat >= afterEnemyCommanderHp && afterEnemyCommanderHp > 0 ? 1 : 0,
+      ownLethalRisk: !after.winner && afterOwnThreat >= afterOwnCommanderHp && afterOwnCommanderHp > 0 ? 1 : 0,
+      moveEnablesAttack: moveEnablesAttack(before, after, action, player) ? 1 : 0,
+      effectiveHealing: effectiveHealing(before, after, action),
+      overkillDamage: overkillDamage(before, action),
       handDelta: after.hands[player].length - before.hands[player].length,
       deploy: action.kind === "deploy" ? 1 : 0,
       move: action.kind === "move" ? 1 : 0,
@@ -652,9 +784,11 @@
   function chooseAiAction(state) {
     const currentLegal = legalActions(state);
     const player = state.currentSide;
-    let best = currentLegal[0];
-    let bestScore = -Infinity;
-    currentLegal.forEach((action) => {
+    const decay = 0.92;
+    let frontier = [];
+    const paths = [];
+
+    currentLegal.forEach((action, index) => {
       const simulated = cloneState(state);
       const legal = legalActions(simulated).find((candidate) => actionsEqual(candidate, action));
       if (!legal) {
@@ -662,12 +796,43 @@
       }
       applyAction(simulated, legal);
       const score = scoreAction(state, simulated, action, player);
-      if (score > bestScore) {
-        bestScore = score;
-        best = action;
-      }
+      const path = { score, tie: -index, firstAction: action, state: simulated };
+      frontier.push(path);
+      paths.push(path);
     });
-    return best;
+
+    frontier.sort((a, b) => b.score - a.score || b.tie - a.tie);
+    frontier = frontier.slice(0, CONFIG.aiSearchWidth);
+
+    for (let depth = 1; depth < CONFIG.aiSearchDepth; depth += 1) {
+      const expanded = [];
+      for (const path of frontier) {
+        if (path.state.winner || path.state.currentSide !== player) {
+          continue;
+        }
+        for (const action of legalActions(path.state)) {
+          const simulated = cloneState(path.state);
+          applyAction(simulated, action);
+          const stepScore = scoreAction(path.state, simulated, action, player);
+          const nextPath = {
+            score: path.score + stepScore * decay ** depth,
+            tie: path.tie,
+            firstAction: path.firstAction,
+            state: simulated,
+          };
+          expanded.push(nextPath);
+          paths.push(nextPath);
+        }
+      }
+      if (!expanded.length) {
+        break;
+      }
+      expanded.sort((a, b) => b.score - a.score || b.tie - a.tie);
+      frontier = expanded.slice(0, CONFIG.aiSearchWidth);
+    }
+
+    paths.sort((a, b) => b.score - a.score || b.tie - a.tie);
+    return paths[0]?.firstAction || currentLegal[0];
   }
 
   function spriteSheetFor(side, blueprintKey) {
@@ -700,11 +865,19 @@
     turnNumber: document.getElementById("turn-number"),
     logCount: document.getElementById("log-count"),
     handCount: document.getElementById("hand-count"),
+    handTitle: document.getElementById("hand-title"),
     selectionCard: document.getElementById("selection-card"),
     selectionKind: document.getElementById("selection-kind"),
     winnerLabel: document.getElementById("winner-label"),
     mapLabel: document.getElementById("map-label"),
     turnCard: document.getElementById("turn-card"),
+    watchAiBtn: document.getElementById("watch-ai-btn"),
+    playBlueBtn: document.getElementById("play-blue-btn"),
+    pauseBtn: document.getElementById("pause-btn"),
+    speedBtn: document.getElementById("speed-btn"),
+    modeLabel: document.getElementById("mode-label"),
+    matchModeLabel: document.getElementById("match-mode-label"),
+    aiSearchLabel: document.getElementById("ai-search-label"),
   };
 
   const app = {
@@ -715,7 +888,38 @@
     unitAnimations: new Map(),
     itemEffects: [],
     animationTimer: null,
+    mode: "watch",
+    paused: false,
+    speedIndex: 0,
   };
+
+  function isAiControlled(side) {
+    return app.mode === "watch" || side === Side.RED;
+  }
+
+  function currentAiDelay() {
+    return CONFIG.aiDelays[app.speedIndex] || CONFIG.aiDelays[0];
+  }
+
+  function setMode(mode) {
+    app.mode = mode;
+    app.paused = false;
+    if (app.pendingAi) {
+      clearTimeout(app.pendingAi);
+      app.pendingAi = null;
+    }
+    clearDragState();
+    render();
+  }
+
+  function setPaused(paused) {
+    app.paused = paused;
+    if (app.pendingAi) {
+      clearTimeout(app.pendingAi);
+      app.pendingAi = null;
+    }
+    render();
+  }
 
   function setSelectionContent(title, body, meta = []) {
     dom.selectionCard.classList.remove("empty");
@@ -794,7 +998,7 @@
 
   function dragTargetsForContext(context) {
     const allActions = legalActions(app.state);
-    if (!context || app.state.currentSide !== Side.BLUE || app.state.winner) {
+    if (!context || app.state.currentSide !== Side.BLUE || app.state.winner || isAiControlled(Side.BLUE)) {
       return [];
     }
     if (context.type === "card") {
@@ -955,19 +1159,20 @@
   }
 
   function maybeScheduleAiTurn() {
-    if (app.state.winner || app.state.currentSide !== Side.RED) {
+    if (app.state.winner || app.paused || !isAiControlled(app.state.currentSide)) {
       return;
     }
     if (app.pendingAi) {
-      clearTimeout(app.pendingAi);
+      return;
     }
     app.pendingAi = setTimeout(() => {
       runAiTurn();
-    }, 420);
+    }, currentAiDelay());
   }
 
   function runAiTurn() {
-    if (app.state.winner || app.state.currentSide !== Side.RED) {
+    app.pendingAi = null;
+    if (app.state.winner || app.paused || !isAiControlled(app.state.currentSide)) {
       return;
     }
     const nextAction = chooseAiAction(app.state);
@@ -1024,7 +1229,7 @@
           if (app.dragContext?.type === "unit" && app.dragContext.unitId === unit.unitId) {
             token.classList.add("selected");
           }
-          token.draggable = unit.side === Side.BLUE && app.state.currentSide === Side.BLUE && !app.state.winner;
+          token.draggable = unit.side === Side.BLUE && app.state.currentSide === Side.BLUE && !app.state.winner && !isAiControlled(Side.BLUE);
           token.dataset.unitId = String(unit.unitId);
           const unitSheet = spriteSheetFor(unit.side, unit.blueprintKey);
           token.innerHTML = `
@@ -1036,7 +1241,7 @@
           `;
           token.addEventListener("click", (event) => {
             event.stopPropagation();
-            if (unit.side === Side.BLUE && app.state.currentSide === Side.BLUE && !app.state.winner) {
+            if (unit.side === Side.BLUE && app.state.currentSide === Side.BLUE && !app.state.winner && !isAiControlled(Side.BLUE)) {
               app.dragContext = { type: "unit", unitId: unit.unitId };
               describeDragContext(app.dragContext);
               highlightMap(dragTargetsForContext(app.dragContext));
@@ -1121,22 +1326,24 @@
 
   function renderHand() {
     dom.hand.innerHTML = "";
-    const hand = app.state.hands[Side.BLUE];
+    const visibleSide = app.mode === "watch" ? app.state.currentSide : Side.BLUE;
+    const hand = app.state.hands[visibleSide];
+    dom.handTitle.textContent = `${visibleSide === Side.BLUE ? "Blue" : "Red"} Hand`;
     hand.forEach((card, handIndex) => {
       const cardEl = document.createElement("article");
       cardEl.className = `card ${card.kind}`;
       if (app.dragContext?.type === "card" && app.dragContext.handIndex === handIndex) {
         cardEl.classList.add("selected");
       }
-      cardEl.draggable = app.state.currentSide === Side.BLUE && !app.state.winner;
+      cardEl.draggable = visibleSide === Side.BLUE && app.state.currentSide === Side.BLUE && !app.state.winner && !isAiControlled(Side.BLUE);
 
       if (card.kind === CardKind.UNIT) {
         const unit = UNIT_BLUEPRINTS[card.key];
-        const cardSheet = spriteSheetFor(Side.BLUE, card.key);
+        const cardSheet = spriteSheetFor(visibleSide, card.key);
         cardEl.innerHTML = `
           <div class="card-figure">
-            <span class="piece-window card-window" style="${spriteWindowStyle(Side.BLUE, card.key)}" aria-hidden="true">
-              <img class="piece-strip card-sprite side-blue" src="${cardSheet.src}" style="${spriteStripStyle(frameForCard(card, handIndex))}" alt="">
+            <span class="piece-window card-window" style="${spriteWindowStyle(visibleSide, card.key)}" aria-hidden="true">
+              <img class="piece-strip card-sprite side-${visibleSide}" src="${cardSheet.src}" style="${spriteStripStyle(frameForCard(card, handIndex))}" alt="">
             </span>
           </div>
           <div class="card-title">
@@ -1176,6 +1383,9 @@
 
       cardEl.addEventListener("click", (event) => {
         event.stopPropagation();
+        if (visibleSide !== Side.BLUE || isAiControlled(Side.BLUE)) {
+          return;
+        }
         app.dragContext = { type: "card", handIndex };
         describeDragContext(app.dragContext);
         highlightMap(dragTargetsForContext(app.dragContext));
@@ -1220,21 +1430,33 @@
     dom.redDeckCounts.textContent = `${app.state.unitDecks[Side.RED].length}U / ${app.state.itemDecks[Side.RED].length}I`;
     dom.turnNumber.textContent = String(app.state.turnNumber);
     dom.logCount.textContent = String(app.state.log.length);
-    dom.handCount.textContent = `${app.state.hands[Side.BLUE].length} cards`;
+    const visibleHandSide = app.mode === "watch" ? app.state.currentSide : Side.BLUE;
+    dom.handCount.textContent = `${app.state.hands[visibleHandSide].length} cards`;
     dom.mapLabel.textContent = app.state.map.name;
+    dom.aiSearchLabel.textContent = `Beam ${CONFIG.aiSearchWidth}`;
+    dom.modeLabel.textContent = app.mode === "watch" ? "AI vs AI" : "Human vs AI";
+    dom.matchModeLabel.textContent = app.mode === "watch" ? "AI vs AI" : "Human vs AI";
 
     if (app.state.winner) {
       dom.winnerLabel.textContent = `${app.state.winner === Side.BLUE ? "Blue" : "Red"} wins`;
-    } else if (app.state.currentSide === Side.RED) {
+    } else if (app.paused) {
+      dom.winnerLabel.textContent = "Paused";
+    } else if (isAiControlled(app.state.currentSide)) {
       dom.winnerLabel.textContent = "AI Thinking";
     } else {
       dom.winnerLabel.textContent = "Match Active";
     }
 
     const blueLegal = legalActions(app.state);
-    dom.drawUnitBtn.disabled = !blueLegal.some((action) => action.kind === "draw_unit") || app.state.currentSide !== Side.BLUE || !!app.state.winner;
-    dom.drawItemBtn.disabled = !blueLegal.some((action) => action.kind === "draw_item") || app.state.currentSide !== Side.BLUE || !!app.state.winner;
-    dom.endTurnBtn.disabled = app.state.currentSide !== Side.BLUE || !!app.state.winner;
+    const humanCanAct = app.state.currentSide === Side.BLUE && !isAiControlled(Side.BLUE) && !app.state.winner;
+    dom.drawUnitBtn.disabled = !blueLegal.some((action) => action.kind === "draw_unit") || !humanCanAct;
+    dom.drawItemBtn.disabled = !blueLegal.some((action) => action.kind === "draw_item") || !humanCanAct;
+    dom.endTurnBtn.disabled = !humanCanAct;
+    dom.watchAiBtn.classList.toggle("active", app.mode === "watch");
+    dom.playBlueBtn.classList.toggle("active", app.mode === "play");
+    dom.pauseBtn.disabled = app.state.winner || app.mode !== "watch";
+    dom.pauseBtn.textContent = app.paused ? "Resume" : "Pause";
+    dom.speedBtn.textContent = `Speed ${app.speedIndex + 1}x`;
   }
 
   function render() {
@@ -1245,9 +1467,13 @@
     if (!app.dragContext) {
       resetSelectionContent();
     }
+    maybeScheduleAiTurn();
   }
 
   dom.drawUnitBtn.addEventListener("click", () => {
+    if (isAiControlled(Side.BLUE)) {
+      return;
+    }
     const action = legalActions(app.state).find((entry) => entry.kind === "draw_unit");
     if (action) {
       performAction(action);
@@ -1255,6 +1481,9 @@
   });
 
   dom.drawItemBtn.addEventListener("click", () => {
+    if (isAiControlled(Side.BLUE)) {
+      return;
+    }
     const action = legalActions(app.state).find((entry) => entry.kind === "draw_item");
     if (action) {
       performAction(action);
@@ -1262,6 +1491,9 @@
   });
 
   dom.endTurnBtn.addEventListener("click", () => {
+    if (isAiControlled(Side.BLUE)) {
+      return;
+    }
     const action = legalActions(app.state).find((entry) => entry.kind === "end_turn");
     if (action) {
       performAction(action);
@@ -1280,6 +1512,27 @@
     app.itemEffects = [];
     app.state = createInitialState();
     clearDragState();
+    render();
+  });
+
+  dom.watchAiBtn.addEventListener("click", () => {
+    setMode("watch");
+  });
+
+  dom.playBlueBtn.addEventListener("click", () => {
+    setMode("play");
+  });
+
+  dom.pauseBtn.addEventListener("click", () => {
+    setPaused(!app.paused);
+  });
+
+  dom.speedBtn.addEventListener("click", () => {
+    app.speedIndex = (app.speedIndex + 1) % CONFIG.aiDelays.length;
+    if (app.pendingAi) {
+      clearTimeout(app.pendingAi);
+      app.pendingAi = null;
+    }
     render();
   });
 

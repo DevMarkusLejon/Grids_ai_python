@@ -254,6 +254,13 @@ class GameState:
         if action not in legal:
             raise ValueError(f"Illegal action: {action}")
 
+        self.apply_unchecked(action)
+
+    def apply_unchecked(self, action: Action) -> None:
+        """Apply an already-validated action for fast AI simulation."""
+        if self.is_done:
+            raise ValueError("The game is already finished.")
+
         if action.kind == "draw_unit":
             self._draw_from_deck(CardKind.UNIT)
             return
