@@ -1,0 +1,110 @@
+{
+  "metadata": {
+    "benchmark_count": 5,
+    "champion_pool_size": 5,
+    "checkpoint_kind": "snapshot",
+    "completed_generations": 14,
+    "games_per_candidate": 8,
+    "generations": 50,
+    "history": [
+      [
+        1,
+        19.889844689270284
+      ],
+      [
+        2,
+        29.07459056720682
+      ],
+      [
+        3,
+        31.41923569464366
+      ],
+      [
+        4,
+        31.41923569464366
+      ],
+      [
+        5,
+        32.231919693755
+      ],
+      [
+        6,
+        38.26893490337021
+      ],
+      [
+        7,
+        38.26893490337021
+      ],
+      [
+        8,
+        38.26893490337021
+      ],
+      [
+        9,
+        38.26893490337021
+      ],
+      [
+        10,
+        38.26893490337021
+      ],
+      [
+        11,
+        50.3308001505336
+      ],
+      [
+        12,
+        50.3308001505336
+      ],
+      [
+        13,
+        50.3308001505336
+      ],
+      [
+        14,
+        50.3308001505336
+      ]
+    ],
+    "map": "plains",
+    "max_score": 176.0,
+    "mutation_scale": 1.25,
+    "population": 10,
+    "resume_from": "trained_weights.json",
+    "score_components": {
+      "board_control_weight": 0.1,
+      "commander_health_weight": 0.2,
+      "consistency_weight": 0.2,
+      "margin_scale": 200.0,
+      "margin_weight": 0.25,
+      "material_weight": 0.15,
+      "random_opponent_weight": 0.5,
+      "resource_weight": 0.05,
+      "speed_weight": 0.25,
+      "timeout_penalty": 0.75,
+      "win_score": 1.0
+    },
+    "seed": 7,
+    "stopped_early": false
+  },
+  "weights": {
+    "attack": 0.3039665044590707,
+    "bias": -0.7917604190523033,
+    "deploy": 5.089783031748675,
+    "draw_item": 2.3666803449055154,
+    "draw_unit": 6.034211969542737,
+    "end_turn": -4.267859011069304,
+    "enemy_commander_delta": 12.774282754309496,
+    "enemy_total_hp_delta": 6.021867223547596,
+    "enemy_unit_delta": 47.81908068985808,
+    "forward_pressure_delta": 4.540340913863352,
+    "hand_delta": 4.869740324800604,
+    "heal": -2.649448948095257,
+    "item": 4.64289201489151,
+    "loss": -10004.328002498616,
+    "move": 6.987327891951255,
+    "own_commander_delta": -21.48864176598216,
+    "own_total_hp_delta": -3.26455564572877,
+    "own_unit_delta": -53.45474315105486,
+    "remaining_ap": -0.33929613525688956,
+    "win": 9998.683974741998
+  }
+}

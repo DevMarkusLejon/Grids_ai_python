@@ -339,6 +339,13 @@ class GameState:
         )
         if target.hp <= 0:
             self._remove_unit(target.unit_id)
+            return
+
+        knockback_destination = self._knockback_destination(attacker.coord, target.coord)
+        if knockback_destination is not None:
+            start = target.coord
+            target.x, target.y = knockback_destination
+            self.log.append(f"{target.name} was knocked back from {start} to {knockback_destination}.")
 
     def _play_item(self, hand_index: int | None, target_unit_id: int | None) -> None:
         assert hand_index is not None
@@ -428,6 +435,18 @@ class GameState:
             if unit.coord == coord:
                 return unit
         return None
+
+    def _knockback_destination(self, attacker: Coord, target: Coord) -> Coord | None:
+        dx = target[0] - attacker[0]
+        dy = target[1] - attacker[1]
+        destination = (target[0] + dx, target[1] + dy)
+        if not self.map_def.in_bounds(destination):
+            return None
+        if destination in self.map_def.blockers:
+            return None
+        if self.unit_at(destination) is not None:
+            return None
+        return destination
 
     def reachable_cells(self, unit: Unit) -> set[Coord]:
         frontier: deque[tuple[Coord, int]] = deque([(unit.coord, 0)])

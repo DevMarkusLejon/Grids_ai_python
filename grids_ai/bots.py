@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import os
 import random
 
 from .data import AttackRole, Side
@@ -141,5 +142,8 @@ def save_weights(path: str, weights: dict[str, float], metadata: dict[str, objec
     payload: dict[str, object] = {"weights": weights}
     if metadata:
         payload["metadata"] = metadata
+    directory = os.path.dirname(path)
+    if directory:
+        os.makedirs(directory, exist_ok=True)
     with open(path, "w", encoding="utf-8") as handle:
         json.dump(payload, handle, indent=2, sort_keys=True)

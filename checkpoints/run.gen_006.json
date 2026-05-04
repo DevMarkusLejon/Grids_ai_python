@@ -1,0 +1,78 @@
+{
+  "metadata": {
+    "benchmark_count": 5,
+    "champion_pool_size": 5,
+    "checkpoint_kind": "snapshot",
+    "completed_generations": 6,
+    "games_per_candidate": 8,
+    "generations": 50,
+    "history": [
+      [
+        1,
+        19.889844689270284
+      ],
+      [
+        2,
+        29.07459056720682
+      ],
+      [
+        3,
+        31.41923569464366
+      ],
+      [
+        4,
+        31.41923569464366
+      ],
+      [
+        5,
+        32.231919693755
+      ],
+      [
+        6,
+        38.26893490337021
+      ]
+    ],
+    "map": "plains",
+    "max_score": 176.0,
+    "mutation_scale": 1.25,
+    "population": 10,
+    "resume_from": "trained_weights.json",
+    "score_components": {
+      "board_control_weight": 0.1,
+      "commander_health_weight": 0.2,
+      "consistency_weight": 0.2,
+      "margin_scale": 200.0,
+      "margin_weight": 0.25,
+      "material_weight": 0.15,
+      "random_opponent_weight": 0.5,
+      "resource_weight": 0.05,
+      "speed_weight": 0.25,
+      "timeout_penalty": 0.75,
+      "win_score": 1.0
+    },
+    "seed": 7,
+    "stopped_early": false
+  },
+  "weights": {
+    "attack": 1.7536737260348132,
+    "bias": -0.0991731606111994,
+    "deploy": 4.265715939101435,
+    "draw_item": 0.49068998647978923,
+    "draw_unit": 5.440160206050033,
+    "end_turn": -2.739863806623339,
+    "enemy_commander_delta": 12.923763991124618,
+    "enemy_total_hp_delta": 4.792532895660294,
+    "enemy_unit_delta": 47.35317102298418,
+    "forward_pressure_delta": 3.633642573677302,
+    "hand_delta": 3.5315470842995964,
+    "heal": -1.0106368737011322,
+    "item": 5.41631385598336,
+    "loss": -10003.412620428204,
+    "move": 6.070542253920534,
+    "own_commander_delta": -21.96091761507722,
+    "own_total_hp_delta": -3.042007347511829,
+    "own_unit_delta": -53.109289930797374,
+    "remaining_ap": -0.7225907322147354,
+    "win": 9999.75167185776
+  }
+}

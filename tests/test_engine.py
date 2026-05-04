@@ -36,6 +36,24 @@ class GameStateTests(unittest.TestCase):
         self.assertTrue(state.is_done)
         self.assertEqual(state.winner, Side.BLUE)
 
+    def test_attack_knocks_target_back_one_tile(self) -> None:
+        state = new_game(seed=1)
+        blue = state._spawn_unit("warrior", Side.BLUE, (5, 3))
+        red = state._spawn_unit("warrior", Side.RED, (6, 3))
+
+        state.apply(Action(kind="attack", unit_id=blue.unit_id, target_unit_id=red.unit_id))
+
+        self.assertEqual(red.coord, (7, 3))
+
+    def test_attack_does_not_knock_target_into_blocked_tile(self) -> None:
+        state = new_game(seed=1)
+        blue = state._spawn_unit("warrior", Side.BLUE, (5, 5))
+        red = state._spawn_unit("warrior", Side.RED, (4, 5))
+
+        state.apply(Action(kind="attack", unit_id=blue.unit_id, target_unit_id=red.unit_id))
+
+        self.assertEqual(red.coord, (4, 5))
+
     def test_end_turn_switches_side_and_refreshes_ap(self) -> None:
         state = new_game(seed=1)
         state.actions_left = 2

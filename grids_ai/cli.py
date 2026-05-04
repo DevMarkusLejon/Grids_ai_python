@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import Sequence
+import sys
+import time
 
 from .bots import DEFAULT_WEIGHTS, HeuristicBot, RandomBot, load_weights
 from .engine import Action, GameState, new_game
@@ -22,6 +24,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--red", default="heuristic", choices=["human", "heuristic", "random"])
     parser.add_argument("--map", default="plains", choices=["plains", "desert"])
     parser.add_argument("--seed", type=int, default=7)
+    parser.add_argument("--delay", type=float, default=0.0, help="Pause in seconds between bot actions.")
     parser.add_argument("--weights", help="Optional JSON file containing heuristic weights.")
     return parser.parse_args(argv)
 
@@ -36,6 +39,32 @@ def print_state(state: GameState) -> None:
     print()
 
 
+def print_recent_log(state: GameState, lines: int = 8) -> None:
+    print("Recent log:")
+    for line in state.log[-lines:]:
+        print(f"  {line}")
+    print()
+
+
+def clear_screen() -> None:
+    sys.stdout.write("\033[2J\033[H")
+    sys.stdout.flush()
+
+
+def render_spectator_view(state: GameState, last_action: str | None = None) -> None:
+    clear_screen()
+    print(state.render())
+    print()
+    print(state.unit_summary())
+    print()
+    print_recent_log(state)
+    if last_action is not None:
+        print(f"Last action: {last_action}")
+    else:
+        print(f"{state.current_side.short} is about to act.")
+    print()
+
+
 def print_actions(state: GameState) -> list[Action]:
     legal = state.legal_actions()
     for index, action in enumerate(legal):
@@ -43,12 +72,22 @@ def print_actions(state: GameState) -> list[Action]:
     return legal
 
 
-def play_bot_turn(state: GameState, bot) -> None:
-    print(f"{state.current_side.short} is controlled by a bot.")
+def play_bot_turn(state: GameState, bot, *, delay: float = 0.0, spectator_mode: bool = False) -> None:
+    if spectator_mode:
+        render_spectator_view(state)
+    else:
+        print(f"{state.current_side.short} is controlled by a bot.")
+
     while not state.is_done:
         action = bot.choose_action(state)
-        print(f"  -> {state.describe_action(action)}")
+        action_text = state.describe_action(action)
+        if not spectator_mode:
+            print(f"  -> {action_text}")
         state.apply(action)
+        if spectator_mode:
+            render_spectator_view(state, last_action=action_text)
+        if delay > 0:
+            time.sleep(delay)
         if action.kind == "end_turn":
             break
 
@@ -118,10 +157,13 @@ def human_turn(state: GameState, controller_name: str) -> bool:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
+    if args.delay < 0:
+        raise SystemExit("--delay must be at least 0.")
     state = new_game(seed=args.seed, map_name=args.map)
     blue_bot = build_bot(args.blue, args.weights)
     red_bot = build_bot(args.red, args.weights)
     controllers = {"blue": blue_bot, "red": red_bot}
+    spectator_mode = blue_bot is not None and red_bot is not None
 
     print("Starting match.")
     while not state.is_done:
@@ -132,10 +174,14 @@ def main(argv: Sequence[str] | None = None) -> int:
                 print("Exiting match.")
                 return 0
         else:
-            print_state(state)
-            play_bot_turn(state, controller)
+            if not spectator_mode:
+                print_state(state)
+            play_bot_turn(state, controller, delay=args.delay, spectator_mode=spectator_mode)
 
-    print_state(state)
+    if spectator_mode:
+        render_spectator_view(state)
+    else:
+        print_state(state)
     print("Game over.")
     print(f"Winner: {state.winner.value} ({state.winner_reason})")
     print("Recent log:")

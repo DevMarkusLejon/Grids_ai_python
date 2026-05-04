@@ -89,7 +89,7 @@ UNIT_BLUEPRINTS: dict[str, UnitBlueprint] = {
         key="commander",
         name="Commander",
         glyph="C",
-        max_hp=300,
+        max_hp=300/3,
         damage=20,
         move_range=2,
         attack_range=1,
@@ -212,5 +212,5 @@ def make_maps() -> dict[str, MapDefinition]:
 MAPS = make_maps()
 
 
-DEFAULT_UNIT_DECK: list[str] = ["warrior", "archer"] * 3 + ["healer", "viking", "assassin"] * 2
+DEFAULT_UNIT_DECK: list[str] = ["warrior", "archer"] * 2 + ["viking", "assassin"] * 2 + ["healer"] * 2
 DEFAULT_ITEM_DECK: list[str] = ["fireball", "strength_tonic"] * 2

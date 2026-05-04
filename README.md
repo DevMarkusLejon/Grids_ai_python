@@ -66,16 +66,53 @@ You can also run bot-vs-bot matches:
 python -m grids_ai.cli --blue heuristic --red random
 ```
 
+To spectate more comfortably, add a delay between bot actions. In bot-vs-bot matches the CLI will
+refresh the screen with a cleaner spectator view instead of endlessly scrolling:
+
+```bash
+python -m grids_ai.cli --blue heuristic --red heuristic --weights trained_weights.json --delay 0.4
+```
+
 ## Training
 
 The trainer uses dependency-free evolutionary self-play to improve the heuristic bot's evaluation weights. It samples candidate weight sets, plays matches, and keeps the best-performing policy.
 During training, the terminal now shows a live per-generation progress bar so long runs have visible feedback.
+Candidates are scored on a mix of win/loss, final margin, and win speed, and they are evaluated
+against a rolling pool of recent champions plus a random bot.
+The score now also rewards preserving your commander, keeping more units alive, controlling more
+board space, finishing with more resources in hand, and staying consistent across evaluations.
+Games that end on the turn-limit tiebreak get an explicit penalty to discourage stalling.
 
 Example:
 
 ```bash
 python -m grids_ai.training --generations 20 --population 10 --games 4 --output trained_weights.json
 ```
+
+To widen the benchmark pool:
+
+```bash
+python -m grids_ai.training --champion-pool-size 5 --games 8 --output trained_weights.json
+```
+
+Continue training from a previous run:
+
+```bash
+python -m grids_ai.training --resume-from trained_weights.json --generations 10 --output trained_weights_v2.json
+```
+
+You can also write resumable checkpoints during training. The `latest` checkpoint is updated every
+generation, and numbered snapshots are kept on your chosen interval:
+
+```bash
+python -m grids_ai.training --checkpoint-prefix checkpoints/run --checkpoint-every 5 --output trained_weights.json
+```
+
+That produces files like `checkpoints/run.latest.json` and `checkpoints/run.gen_005.json`, and you
+can resume from either one with `--resume-from`.
+
+Training now stops early if the champion reaches the theoretical maximum score for the current
+evaluation setup, since no later candidate can beat that score without changing the config.
 
 Use the trained weights in the CLI:
 
