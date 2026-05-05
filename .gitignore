@@ -11,6 +11,7 @@ neural_data/
 training_logs/
 cloud_results/
 logs/
+tmp_tests/
 
 checkpoints/long-*.json
 checkpoints/value_model*.json

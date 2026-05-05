@@ -75,6 +75,8 @@
     aiSearchDepth: 8,
     neuralScale: 120,
     heuristicScale: 1,
+    neuralSearchWidth: 3,
+    neuralSearchDepth: 4,
     aiDelays: [720, 360, 140],
   };
 
@@ -878,7 +880,13 @@
     return state.currentSide === player ? prediction : -prediction;
   }
 
-  function chooseNeuralAiAction(state) {
+  function scoreNeuralAction(before, after, action, player) {
+    const heuristicScore = scoreAction(before, after, action, player);
+    const neuralScore = predictStateForPlayer(STRONGEST_VALUE_MODEL, after, player) * CONFIG.neuralScale;
+    return heuristicScore * CONFIG.heuristicScale + neuralScore;
+  }
+
+  function chooseNeuralGreedyAction(state) {
     if (!STRONGEST_VALUE_MODEL) {
       return chooseHeuristicAiAction(state);
     }
@@ -891,12 +899,66 @@
         return { score: Number.NEGATIVE_INFINITY, tie: -index, action };
       }
       applyAction(simulated, legal);
-      const heuristicScore = scoreAction(state, simulated, action, player);
-      const neuralScore = predictStateForPlayer(STRONGEST_VALUE_MODEL, simulated, player) * CONFIG.neuralScale;
-      return { score: heuristicScore * CONFIG.heuristicScale + neuralScore, tie: -index, action };
+      return { score: scoreNeuralAction(state, simulated, action, player), tie: -index, action };
     });
     scored.sort((a, b) => b.score - a.score || b.tie - a.tie);
     return scored[0]?.action || currentLegal[0];
+  }
+
+  function chooseNeuralAiAction(state) {
+    if (!STRONGEST_VALUE_MODEL) {
+      return chooseHeuristicAiAction(state);
+    }
+    const currentLegal = legalActions(state);
+    const player = state.currentSide;
+    const decay = 0.92;
+    let frontier = [];
+    const paths = [];
+
+    currentLegal.forEach((action, index) => {
+      const simulated = cloneState(state);
+      applyAction(simulated, action);
+      const path = {
+        score: scoreNeuralAction(state, simulated, action, player),
+        tie: -index,
+        firstAction: action,
+        state: simulated,
+      };
+      frontier.push(path);
+      paths.push(path);
+    });
+
+    frontier.sort((a, b) => b.score - a.score || b.tie - a.tie);
+    frontier = frontier.slice(0, CONFIG.neuralSearchWidth);
+
+    for (let depth = 1; depth < CONFIG.neuralSearchDepth; depth += 1) {
+      const expanded = [];
+      for (const path of frontier) {
+        if (path.state.winner || path.state.currentSide !== player) {
+          continue;
+        }
+        for (const action of legalActions(path.state)) {
+          const simulated = cloneState(path.state);
+          applyAction(simulated, action);
+          const nextPath = {
+            score: path.score + scoreNeuralAction(path.state, simulated, action, player) * decay ** depth,
+            tie: path.tie,
+            firstAction: path.firstAction,
+            state: simulated,
+          };
+          expanded.push(nextPath);
+          paths.push(nextPath);
+        }
+      }
+      if (!expanded.length) {
+        break;
+      }
+      expanded.sort((a, b) => b.score - a.score || b.tie - a.tie);
+      frontier = expanded.slice(0, CONFIG.neuralSearchWidth);
+    }
+
+    paths.sort((a, b) => b.score - a.score || b.tie - a.tie);
+    return paths[0]?.firstAction || chooseNeuralGreedyAction(state);
   }
 
   function chooseHeuristicAiAction(state) {
@@ -1558,7 +1620,9 @@
     const visibleHandSide = app.mode === "watch" ? app.state.currentSide : Side.BLUE;
     dom.handCount.textContent = `${app.state.hands[visibleHandSide].length} cards`;
     dom.mapLabel.textContent = app.state.map.name;
-    dom.aiSearchLabel.textContent = STRONGEST_VALUE_MODEL ? "Red neural value" : `Beam ${CONFIG.aiSearchWidth}`;
+    dom.aiSearchLabel.textContent = STRONGEST_VALUE_MODEL
+      ? `Red neural beam ${CONFIG.neuralSearchWidth}x${CONFIG.neuralSearchDepth}`
+      : `Beam ${CONFIG.aiSearchWidth}`;
     dom.modeLabel.textContent = app.mode === "watch" ? "Heuristic vs Neural" : "Human vs Neural";
     dom.matchModeLabel.textContent = app.mode === "watch" ? "Heuristic vs Neural" : "Human vs Neural";
 

@@ -1,0 +1,84 @@
+{
+  "elapsed_seconds": 710.2525830999948,
+  "games_per_side": 10,
+  "heuristic_scale": 1.0,
+  "hidden_size": 128,
+  "input_size": 925,
+  "map": "plains",
+  "model": "checkpoints/value_model_torch_128_shaped_1000_300hp.json",
+  "neural_scale": 120.0,
+  "opponents": [
+    {
+      "average_half_turns": 16.6,
+      "blue_wins": 10,
+      "draws": 0,
+      "games_per_side": 10,
+      "kind": "random",
+      "losses": 0,
+      "opponent": "random",
+      "red_wins": 10,
+      "score_rate": 1.0,
+      "total_games": 20,
+      "wins": 20
+    },
+    {
+      "average_half_turns": 31.55,
+      "blue_wins": 6,
+      "draws": 0,
+      "games_per_side": 10,
+      "kind": "heuristic",
+      "losses": 9,
+      "metadata": {
+        "weights": "default"
+      },
+      "opponent": "default_heuristic_w3_d6",
+      "red_wins": 5,
+      "score_rate": 0.55,
+      "total_games": 20,
+      "wins": 11
+    },
+    {
+      "average_half_turns": 43.8,
+      "blue_wins": 8,
+      "draws": 0,
+      "games_per_side": 10,
+      "kind": "heuristic",
+      "losses": 6,
+      "metadata": {
+        "weights": "trained_weights.json"
+      },
+      "opponent": "trained_heuristic:trained_weights.json",
+      "red_wins": 6,
+      "score_rate": 0.7,
+      "total_games": 20,
+      "wins": 14
+    },
+    {
+      "average_half_turns": 43.95,
+      "blue_wins": 7,
+      "draws": 0,
+      "games_per_side": 10,
+      "kind": "neural",
+      "losses": 9,
+      "metadata": {
+        "heuristic_scale": 1.0,
+        "hidden_size": 128,
+        "model": "checkpoints/value_model_torch_128_shaped_1200_clean_300hp_20260505-002857.json",
+        "neural_scale": 120.0
+      },
+      "opponent": "neural:value_model_torch_128_shaped_1200_clean_300hp_20260505-002857.json",
+      "red_wins": 4,
+      "score_rate": 0.55,
+      "total_games": 20,
+      "wins": 11
+    }
+  ],
+  "overall": {
+    "average_half_turns": 33.975,
+    "draws": 0,
+    "losses": 24,
+    "score_rate": 0.7,
+    "wins": 56
+  },
+  "total_games": 80
+}

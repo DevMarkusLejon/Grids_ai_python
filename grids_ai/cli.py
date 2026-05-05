@@ -10,10 +10,19 @@ from .engine import Action, GameState, new_game
 from .neural import NeuralValueBot, ValueNetwork
 
 
-DEFAULT_NEURAL_MODEL = "checkpoints/value_model_torch_128_shaped_1000.json"
+DEFAULT_NEURAL_MODEL = "checkpoints/value_model_torch_128_shaped_1000_300hp.json"
 
 
-def build_bot(name: str, weights_path: str | None = None, model_path: str | None = None):
+def build_bot(
+    name: str,
+    weights_path: str | None = None,
+    model_path: str | None = None,
+    *,
+    neural_scale: float = 120.0,
+    heuristic_scale: float = 1.0,
+    neural_search_width: int = 1,
+    neural_search_depth: int | None = 1,
+):
     if name == "random":
         return RandomBot()
     if name == "heuristic":
@@ -22,7 +31,14 @@ def build_bot(name: str, weights_path: str | None = None, model_path: str | None
     if name == "neural":
         model = ValueNetwork.load(model_path or DEFAULT_NEURAL_MODEL)
         fallback_weights = load_weights(weights_path) if weights_path else dict(DEFAULT_WEIGHTS)
-        return NeuralValueBot(model, fallback_weights=fallback_weights)
+        return NeuralValueBot(
+            model,
+            fallback_weights=fallback_weights,
+            neural_scale=neural_scale,
+            heuristic_scale=heuristic_scale,
+            search_width=neural_search_width,
+            search_depth=neural_search_depth,
+        )
     return None
 
 
@@ -39,6 +55,10 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default=DEFAULT_NEURAL_MODEL,
         help="Neural value model JSON used when either side is controlled by --blue/--red neural.",
     )
+    parser.add_argument("--neural-scale", type=float, default=120.0)
+    parser.add_argument("--heuristic-scale", type=float, default=1.0)
+    parser.add_argument("--neural-search-width", type=int, default=1)
+    parser.add_argument("--neural-search-depth", type=int, default=1)
     return parser.parse_args(argv)
 
 
@@ -173,8 +193,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.delay < 0:
         raise SystemExit("--delay must be at least 0.")
     state = new_game(seed=args.seed, map_name=args.map)
-    blue_bot = build_bot(args.blue, args.weights, args.model)
-    red_bot = build_bot(args.red, args.weights, args.model)
+    bot_options = {
+        "neural_scale": args.neural_scale,
+        "heuristic_scale": args.heuristic_scale,
+        "neural_search_width": args.neural_search_width,
+        "neural_search_depth": args.neural_search_depth,
+    }
+    blue_bot = build_bot(args.blue, args.weights, args.model, **bot_options)
+    red_bot = build_bot(args.red, args.weights, args.model, **bot_options)
     controllers = {"blue": blue_bot, "red": red_bot}
     spectator_mode = blue_bot is not None and red_bot is not None
 

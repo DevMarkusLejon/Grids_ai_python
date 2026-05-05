@@ -1,0 +1,84 @@
+{
+  "elapsed_seconds": 468.53894410002977,
+  "games_per_side": 6,
+  "heuristic_scale": 2.0,
+  "hidden_size": 128,
+  "input_size": 925,
+  "map": "plains",
+  "model": "checkpoints/value_model_torch_128_shaped_1000_300hp.json",
+  "neural_scale": 120.0,
+  "opponents": [
+    {
+      "average_half_turns": 16.5,
+      "blue_wins": 6,
+      "draws": 0,
+      "games_per_side": 6,
+      "kind": "random",
+      "losses": 0,
+      "opponent": "random",
+      "red_wins": 6,
+      "score_rate": 1.0,
+      "total_games": 12,
+      "wins": 12
+    },
+    {
+      "average_half_turns": 36.666666666666664,
+      "blue_wins": 5,
+      "draws": 0,
+      "games_per_side": 6,
+      "kind": "heuristic",
+      "losses": 2,
+      "metadata": {
+        "weights": "default"
+      },
+      "opponent": "default_heuristic_w3_d6",
+      "red_wins": 5,
+      "score_rate": 0.8333333333333334,
+      "total_games": 12,
+      "wins": 10
+    },
+    {
+      "average_half_turns": 44.5,
+      "blue_wins": 3,
+      "draws": 0,
+      "games_per_side": 6,
+      "kind": "heuristic",
+      "losses": 6,
+      "metadata": {
+        "weights": "trained_weights.json"
+      },
+      "opponent": "trained_heuristic:trained_weights.json",
+      "red_wins": 3,
+      "score_rate": 0.5,
+      "total_games": 12,
+      "wins": 6
+    },
+    {
+      "average_half_turns": 46.25,
+      "blue_wins": 1,
+      "draws": 0,
+      "games_per_side": 6,
+      "kind": "neural",
+      "losses": 5,
+      "metadata": {
+        "heuristic_scale": 2.0,
+        "hidden_size": 128,
+        "model": "checkpoints/value_model_torch_128_shaped_800_deterministic_300hp_20260505-014626.json",
+        "neural_scale": 120.0
+      },
+      "opponent": "neural:value_model_torch_128_shaped_800_deterministic_300hp_20260505-014626.json",
+      "red_wins": 6,
+      "score_rate": 0.5833333333333334,
+      "total_games": 12,
+      "wins": 7
+    }
+  ],
+  "overall": {
+    "average_half_turns": 35.979166666666664,
+    "draws": 0,
+    "losses": 13,
+    "score_rate": 0.7291666666666666,
+    "wins": 35
+  },
+  "total_games": 48
+}

@@ -215,27 +215,82 @@ class NeuralValueBot(Bot):
         seed: int | None = None,
         neural_scale: float = 120.0,
         heuristic_scale: float = 1.0,
+        search_width: int = 1,
+        search_depth: int | None = 1,
     ) -> None:
         self.model = model
         self.heuristic = HeuristicBot(fallback_weights or dict(DEFAULT_WEIGHTS), seed=seed, search_width=1)
         self.rng = random.Random(seed)
         self.neural_scale = neural_scale
         self.heuristic_scale = heuristic_scale
+        self.search_width = max(1, search_width)
+        self.search_depth = search_depth
+
+    def score_action(self, before: GameState, after: GameState, action: Action, player: Side) -> float:
+        heuristic_score = self.heuristic.score_action(before, after, action, player)
+        neural_score = self.model.predict_state_for_player(after, player) * self.neural_scale
+        return heuristic_score * self.heuristic_scale + neural_score
+
+    def choose_greedy_action(self, state: GameState, legal: list[Action], player: Side) -> Action:
+        scored: list[tuple[float, float, Action]] = []
+        for action in legal:
+            after = state.clone()
+            after.apply_unchecked(action)
+            scored.append((self.score_action(state, after, action, player), self.rng.random(), action))
+        scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
+        return scored[0][2]
+
+    def choose_planned_action(self, state: GameState, legal: list[Action], player: Side) -> Action:
+        depth_limit = self.search_depth or state.config.max_actions + 1
+        depth_limit = max(1, depth_limit)
+        width = max(1, self.search_width)
+        decay = 0.92
+
+        frontier: list[tuple[float, float, Action, GameState]] = []
+        all_paths: list[tuple[float, float, Action, GameState]] = []
+        for action in legal:
+            after = state.clone()
+            after.apply_unchecked(action)
+            path = (self.score_action(state, after, action, player), self.rng.random(), action, after)
+            frontier.append(path)
+            all_paths.append(path)
+
+        frontier.sort(key=lambda item: (item[0], item[1]), reverse=True)
+        frontier = frontier[:width]
+
+        for depth in range(1, depth_limit):
+            expanded: list[tuple[float, float, Action, GameState]] = []
+            for cumulative_score, tie_breaker, first_action, branch_state in frontier:
+                if branch_state.is_done or branch_state.current_side is not player:
+                    continue
+                for action in branch_state.legal_actions():
+                    after = branch_state.clone()
+                    after.apply_unchecked(action)
+                    step_score = self.score_action(branch_state, after, action, player)
+                    path = (
+                        cumulative_score + step_score * (decay**depth),
+                        tie_breaker,
+                        first_action,
+                        after,
+                    )
+                    expanded.append(path)
+                    all_paths.append(path)
+            if not expanded:
+                break
+            expanded.sort(key=lambda item: (item[0], item[1]), reverse=True)
+            frontier = expanded[:width]
+
+        all_paths.sort(key=lambda item: (item[0], item[1]), reverse=True)
+        return all_paths[0][2]
 
     def choose_action(self, state: GameState) -> Action:
         legal = state.legal_actions()
         if not legal:
             raise ValueError("No legal actions available.")
         player = state.current_side
-        scored: list[tuple[float, float, Action]] = []
-        for action in legal:
-            after = state.clone()
-            after.apply_unchecked(action)
-            heuristic_score = self.heuristic.score_action(state, after, action, player)
-            neural_score = self.model.predict_state_for_player(after, player) * self.neural_scale
-            scored.append((heuristic_score * self.heuristic_scale + neural_score, self.rng.random(), action))
-        scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
-        return scored[0][2]
+        if self.search_width <= 1 and (self.search_depth is None or self.search_depth <= 1):
+            return self.choose_greedy_action(state, legal, player)
+        return self.choose_planned_action(state, legal, player)
 
 
 class ExploratoryHeuristicBot(Bot):
@@ -1197,6 +1252,10 @@ def build_gauntlet_opponents(
     neural_model_paths: Sequence[str] = (),
     heuristic_search_width: int = 3,
     heuristic_search_depth: int | None = 6,
+    neural_scale: float = 120.0,
+    heuristic_scale: float = 1.0,
+    neural_search_width: int = 1,
+    neural_search_depth: int | None = 1,
 ) -> list[GauntletOpponent]:
     opponents: list[GauntletOpponent] = [
         GauntletOpponent(
@@ -1245,8 +1304,19 @@ def build_gauntlet_opponents(
                     loaded,
                     fallback_weights=fallback_weights,
                     seed=seed,
+                    neural_scale=neural_scale,
+                    heuristic_scale=heuristic_scale,
+                    search_width=neural_search_width,
+                    search_depth=neural_search_depth,
                 ),
-                metadata={"model": path, "hidden_size": model.hidden_size},
+                metadata={
+                    "model": path,
+                    "hidden_size": model.hidden_size,
+                    "neural_scale": neural_scale,
+                    "heuristic_scale": heuristic_scale,
+                    "search_width": neural_search_width,
+                    "search_depth": neural_search_depth,
+                },
             )
         )
     return opponents
@@ -1264,6 +1334,10 @@ def run_value_gauntlet(
     map_name: str = "plains",
     heuristic_search_width: int = 3,
     heuristic_search_depth: int | None = 6,
+    neural_scale: float = 120.0,
+    heuristic_scale: float = 1.0,
+    neural_search_width: int = 1,
+    neural_search_depth: int | None = 1,
     progress: bool = False,
 ) -> dict[str, object]:
     if games < 1:
@@ -1285,6 +1359,10 @@ def run_value_gauntlet(
         neural_model_paths=opponent_model_paths,
         heuristic_search_width=heuristic_search_width,
         heuristic_search_depth=heuristic_search_depth,
+        neural_scale=neural_scale,
+        heuristic_scale=heuristic_scale,
+        neural_search_width=neural_search_width,
+        neural_search_depth=neural_search_depth,
     )
 
     results: list[dict[str, object]] = []
@@ -1303,7 +1381,15 @@ def run_value_gauntlet(
         half_turns: list[int] = []
         for game_index in range(games):
             game_seed = seed + opponent_index * 10000 + game_index
-            subject_blue = NeuralValueBot(model, fallback_weights=fallback_weights, seed=game_seed + 1)
+            subject_blue = NeuralValueBot(
+                model,
+                fallback_weights=fallback_weights,
+                seed=game_seed + 1,
+                neural_scale=neural_scale,
+                heuristic_scale=heuristic_scale,
+                search_width=neural_search_width,
+                search_depth=neural_search_depth,
+            )
             opponent_red = opponent.make_bot(game_seed + 2)
             blue_state = play_match(subject_blue, opponent_red, seed=game_seed, map_name=map_name)
             result = side_result(blue_state, Side.BLUE)
@@ -1314,7 +1400,15 @@ def run_value_gauntlet(
             half_turns.append(blue_state.half_turns_played)
 
             opponent_blue = opponent.make_bot(game_seed + 1002)
-            subject_red = NeuralValueBot(model, fallback_weights=fallback_weights, seed=game_seed + 1001)
+            subject_red = NeuralValueBot(
+                model,
+                fallback_weights=fallback_weights,
+                seed=game_seed + 1001,
+                neural_scale=neural_scale,
+                heuristic_scale=heuristic_scale,
+                search_width=neural_search_width,
+                search_depth=neural_search_depth,
+            )
             red_state = play_match(opponent_blue, subject_red, seed=game_seed, map_name=map_name)
             result = side_result(red_state, Side.RED)
             wins += 1 if result == 1 else 0
@@ -1361,6 +1455,10 @@ def run_value_gauntlet(
         "map": map_name,
         "games_per_side": games,
         "total_games": total_games,
+        "neural_scale": neural_scale,
+        "heuristic_scale": heuristic_scale,
+        "neural_search_width": neural_search_width,
+        "neural_search_depth": neural_search_depth,
         "overall": {
             "wins": overall_wins,
             "draws": overall_draws,
@@ -1459,6 +1557,10 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     gauntlet.add_argument("--map", default="plains", choices=["plains", "desert"])
     gauntlet.add_argument("--heuristic-search-width", type=int, default=3)
     gauntlet.add_argument("--heuristic-search-depth", type=int, default=6)
+    gauntlet.add_argument("--neural-scale", type=float, default=120.0)
+    gauntlet.add_argument("--heuristic-scale", type=float, default=1.0)
+    gauntlet.add_argument("--neural-search-width", type=int, default=1)
+    gauntlet.add_argument("--neural-search-depth", type=int, default=1)
     gauntlet.add_argument(
         "--opponent-model",
         action="append",
@@ -1542,6 +1644,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             map_name=args.map,
             heuristic_search_width=args.heuristic_search_width,
             heuristic_search_depth=args.heuristic_search_depth,
+            neural_scale=args.neural_scale,
+            heuristic_scale=args.heuristic_scale,
+            neural_search_width=args.neural_search_width,
+            neural_search_depth=args.neural_search_depth,
             progress=not args.quiet,
         )
         payload = json.dumps(result, indent=2, sort_keys=True)

@@ -142,11 +142,19 @@ class NeuralTests(unittest.TestCase):
                 auto_neural_opponents=False,
                 heuristic_search_width=1,
                 heuristic_search_depth=1,
+                neural_scale=80.0,
+                heuristic_scale=0.5,
+                neural_search_width=2,
+                neural_search_depth=2,
             )
 
         self.assertEqual(result["games_per_side"], 1)
         self.assertEqual(result["total_games"], 4)
         self.assertEqual(len(result["opponents"]), 2)
+        self.assertEqual(result["neural_scale"], 80.0)
+        self.assertEqual(result["heuristic_scale"], 0.5)
+        self.assertEqual(result["neural_search_width"], 2)
+        self.assertEqual(result["neural_search_depth"], 2)
 
 
 if __name__ == "__main__":

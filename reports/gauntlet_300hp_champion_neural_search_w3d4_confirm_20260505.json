@@ -1,0 +1,67 @@
+{
+  "elapsed_seconds": 957.8788381000049,
+  "games_per_side": 4,
+  "heuristic_scale": 1.0,
+  "hidden_size": 128,
+  "input_size": 925,
+  "map": "plains",
+  "model": "checkpoints/value_model_torch_128_shaped_1000_300hp.json",
+  "neural_scale": 120.0,
+  "neural_search_depth": 4,
+  "neural_search_width": 3,
+  "opponents": [
+    {
+      "average_half_turns": 14.75,
+      "blue_wins": 4,
+      "draws": 0,
+      "games_per_side": 4,
+      "kind": "random",
+      "losses": 0,
+      "opponent": "random",
+      "red_wins": 4,
+      "score_rate": 1.0,
+      "total_games": 8,
+      "wins": 8
+    },
+    {
+      "average_half_turns": 32.0,
+      "blue_wins": 4,
+      "draws": 0,
+      "games_per_side": 4,
+      "kind": "heuristic",
+      "losses": 2,
+      "metadata": {
+        "weights": "default"
+      },
+      "opponent": "default_heuristic_w3_d6",
+      "red_wins": 2,
+      "score_rate": 0.75,
+      "total_games": 8,
+      "wins": 6
+    },
+    {
+      "average_half_turns": 45.5,
+      "blue_wins": 1,
+      "draws": 0,
+      "games_per_side": 4,
+      "kind": "heuristic",
+      "losses": 3,
+      "metadata": {
+        "weights": "trained_weights.json"
+      },
+      "opponent": "trained_heuristic:trained_weights.json",
+      "red_wins": 4,
+      "score_rate": 0.625,
+      "total_games": 8,
+      "wins": 5
+    }
+  ],
+  "overall": {
+    "average_half_turns": 30.75,
+    "draws": 0,
+    "losses": 5,
+    "score_rate": 0.7916666666666666,
+    "wins": 19
+  },
+  "total_games": 24
+}

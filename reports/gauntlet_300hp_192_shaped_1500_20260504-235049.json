@@ -1,0 +1,80 @@
+{
+  "elapsed_seconds": 548.3326450998429,
+  "games_per_side": 6,
+  "hidden_size": 192,
+  "input_size": 925,
+  "map": "plains",
+  "model": "checkpoints/value_model_torch_192_shaped_1500_300hp_20260504-235049.json",
+  "opponents": [
+    {
+      "average_half_turns": 15.666666666666666,
+      "blue_wins": 6,
+      "draws": 0,
+      "games_per_side": 6,
+      "kind": "random",
+      "losses": 0,
+      "opponent": "random",
+      "red_wins": 6,
+      "score_rate": 1.0,
+      "total_games": 12,
+      "wins": 12
+    },
+    {
+      "average_half_turns": 35.0,
+      "blue_wins": 4,
+      "draws": 0,
+      "games_per_side": 6,
+      "kind": "heuristic",
+      "losses": 4,
+      "metadata": {
+        "weights": "default"
+      },
+      "opponent": "default_heuristic_w3_d6",
+      "red_wins": 4,
+      "score_rate": 0.6666666666666666,
+      "total_games": 12,
+      "wins": 8
+    },
+    {
+      "average_half_turns": 47.583333333333336,
+      "blue_wins": 3,
+      "draws": 0,
+      "games_per_side": 6,
+      "kind": "heuristic",
+      "losses": 7,
+      "metadata": {
+        "weights": "trained_weights.json"
+      },
+      "opponent": "trained_heuristic:trained_weights.json",
+      "red_wins": 2,
+      "score_rate": 0.4166666666666667,
+      "total_games": 12,
+      "wins": 5
+    },
+    {
+      "average_half_turns": 38.916666666666664,
+      "blue_wins": 3,
+      "draws": 0,
+      "games_per_side": 6,
+      "kind": "neural",
+      "losses": 5,
+      "metadata": {
+        "hidden_size": 128,
+        "model": "checkpoints/value_model_torch_128_shaped_1000_300hp.json"
+      },
+      "opponent": "neural:value_model_torch_128_shaped_1000_300hp.json",
+      "red_wins": 4,
+      "score_rate": 0.5833333333333334,
+      "total_games": 12,
+      "wins": 7
+    }
+  ],
+  "overall": {
+    "average_half_turns": 34.291666666666664,
+    "draws": 0,
+    "losses": 16,
+    "score_rate": 0.6666666666666666,
+    "wins": 32
+  },
+  "total_games": 48
+}
