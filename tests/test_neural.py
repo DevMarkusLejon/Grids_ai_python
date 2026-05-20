@@ -10,7 +10,9 @@ from grids_ai.neural import (
     ValueNetwork,
     generate_self_play_dataset,
     load_examples,
+    load_examples_from_paths,
     resolve_train_backend,
+    run_champion_gauntlet,
     run_value_gauntlet,
     split_examples,
     target_value,
@@ -32,6 +34,21 @@ class NeuralTests(unittest.TestCase):
             loaded = ValueNetwork.load(path)
 
         self.assertAlmostEqual(before, loaded.predict(features), places=10)
+
+    def test_value_network_predict_many_matches_scalar_predictions(self) -> None:
+        model = ValueNetwork(input_size=3, hidden_size=4, seed=1)
+        examples = [
+            [1.0, 0.0, -1.0],
+            [0.0, 0.5, 1.0],
+            [-0.25, 1.0, 0.0],
+        ]
+
+        batch_predictions = model.predict_many(examples)
+        scalar_predictions = [model.predict(features) for features in examples]
+
+        self.assertEqual(len(batch_predictions), len(scalar_predictions))
+        for batch, scalar in zip(batch_predictions, scalar_predictions):
+            self.assertAlmostEqual(batch, scalar, places=6)
 
     def test_value_network_training_reduces_single_example_loss(self) -> None:
         example = TrainingExample(features=[1.0, 0.5, -0.25], value=1.0)
@@ -74,6 +91,29 @@ class NeuralTests(unittest.TestCase):
             self.assertEqual(len(history), 1)
             self.assertTrue(os.path.exists(model_path))
 
+    def test_self_play_dataset_can_use_neural_teacher(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            teacher_path = os.path.join(temp_dir, "teacher.json")
+            data_path = os.path.join(temp_dir, "neural_selfplay.jsonl")
+            ValueNetwork(input_size=925, hidden_size=4, seed=4).save(teacher_path)
+
+            count = generate_self_play_dataset(
+                output_path=data_path,
+                games=1,
+                seed=4,
+                search_width=1,
+                search_depth=1,
+                sample_every=25,
+                max_examples_per_game=3,
+                teacher="neural",
+                teacher_model_path=teacher_path,
+                teacher_neural_search_width=1,
+                teacher_neural_search_depth=1,
+            )
+
+            self.assertGreater(count, 0)
+            self.assertEqual(len(load_examples(data_path)), count)
+
     def test_train_value_model_records_validation_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             data_path = os.path.join(temp_dir, "examples.jsonl")
@@ -104,6 +144,51 @@ class NeuralTests(unittest.TestCase):
         self.assertEqual(metadata["training_examples"], 8)
         self.assertEqual(metadata["validation_examples"], 2)
         self.assertEqual(len(metadata["validation_loss_history"]), 2)
+
+    def test_training_can_blend_multiple_datasets(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            first_path = os.path.join(temp_dir, "first.jsonl")
+            second_path = os.path.join(temp_dir, "second.jsonl")
+            model_path = os.path.join(temp_dir, "model.json")
+            for path, offset in [(first_path, 0), (second_path, 10)]:
+                with open(path, "w", encoding="utf-8") as handle:
+                    for index in range(4):
+                        value = 1.0 if (index + offset) % 2 else -1.0
+                        features = [float((index + offset) % 3), 1.0, 0.0]
+                        handle.write(json.dumps({"features": features, "value": value}))
+                        handle.write("\n")
+
+            examples = load_examples_from_paths([first_path, second_path])
+            train_value_model(
+                dataset_path=[first_path, second_path],
+                model_path=model_path,
+                hidden_size=4,
+                epochs=1,
+                learning_rate=0.01,
+                backend="python",
+                validation_fraction=0.25,
+            )
+
+            with open(model_path, "r", encoding="utf-8") as handle:
+                payload = json.load(handle)
+
+        self.assertEqual(len(examples), 8)
+        self.assertEqual(payload["metadata"]["examples"], 8)
+        self.assertEqual(payload["metadata"]["dataset"], [first_path, second_path])
+
+    def test_multi_dataset_loader_can_cap_each_dataset(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            first_path = os.path.join(temp_dir, "first.jsonl")
+            second_path = os.path.join(temp_dir, "second.jsonl")
+            for path in [first_path, second_path]:
+                with open(path, "w", encoding="utf-8") as handle:
+                    for index in range(5):
+                        handle.write(json.dumps({"features": [float(index)], "value": 0.0}))
+                        handle.write("\n")
+
+            examples = load_examples_from_paths([first_path, second_path], per_dataset_limit=2)
+
+        self.assertEqual(len(examples), 4)
 
     def test_explicit_python_backend_is_stable(self) -> None:
         self.assertEqual(resolve_train_backend("python"), "python")
@@ -178,6 +263,33 @@ class NeuralTests(unittest.TestCase):
         self.assertEqual(result["total_games"], 2)
         self.assertEqual(len(result["opponents"]), 1)
         self.assertEqual(result["opponents"][0]["kind"], "neural")
+
+    def test_champion_gauntlet_reports_promotion_decision(self) -> None:
+        candidate = ValueNetwork(input_size=925, hidden_size=4, seed=7)
+        champion = ValueNetwork(input_size=925, hidden_size=4, seed=8)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            candidate_path = os.path.join(temp_dir, "candidate.json")
+            champion_path = os.path.join(temp_dir, "champion.json")
+            candidate.save(candidate_path)
+            champion.save(champion_path)
+
+            result = run_champion_gauntlet(
+                candidate_model_path=candidate_path,
+                champion_model_path=champion_path,
+                games=1,
+                seed=11,
+                include_baseline_opponents=False,
+                neural_search_width=1,
+                neural_search_depth=1,
+                min_head_to_head_score=0.0,
+                min_overall_score=0.0,
+                min_head_to_head_lower_bound=0.0,
+            )
+
+        self.assertEqual(result["total_games"], 2)
+        self.assertIn("champion_decision", result)
+        self.assertIn("promote", result["champion_decision"])
+        self.assertEqual(result["champion_decision"]["champion_model"], champion_path)
 
 
 if __name__ == "__main__":

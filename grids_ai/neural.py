@@ -22,6 +22,7 @@ MODEL_VERSION = 1
 SparseFeatures = tuple[tuple[int, float], ...]
 TrainBackend = str
 TargetMode = str
+TeacherMode = str
 
 
 def nonzero_features(features: Sequence[float]) -> SparseFeatures:
@@ -84,6 +85,41 @@ class ValueNetwork:
         prediction, _ = self.forward(features)
         return prediction
 
+    def _numpy_weights(self):
+        cache = getattr(self, "_numpy_cache", None)
+        if cache is not None:
+            return cache
+        try:
+            import numpy as np
+        except ImportError:
+            self._numpy_cache = False
+            return False
+        cache = (
+            np.asarray(self.w1, dtype=np.float32),
+            np.asarray(self.b1, dtype=np.float32),
+            np.asarray(self.w2, dtype=np.float32),
+            np.asarray(self.b2, dtype=np.float32),
+        )
+        self._numpy_cache = cache
+        return cache
+
+    def predict_many(self, feature_batch: Sequence[Sequence[float]]) -> list[float]:
+        if not feature_batch:
+            return []
+        numpy_weights = self._numpy_weights()
+        if numpy_weights:
+            try:
+                import numpy as np
+
+                w1, b1, w2, b2 = numpy_weights
+                features = np.asarray(feature_batch, dtype=np.float32)
+                hidden = np.tanh(features @ w1.T + b1)
+                predictions = np.tanh(hidden @ w2 + b2)
+                return [float(value) for value in predictions.tolist()]
+            except (TypeError, ValueError):
+                pass
+        return [self.predict(features) for features in feature_batch]
+
     def predict_state_for_player(self, state: GameState, player: Side) -> float:
         if state.is_done:
             if state.winner is None:
@@ -91,6 +127,27 @@ class ValueNetwork:
             return 1.0 if state.winner is player else -1.0
         prediction = self.predict(encode_state_vector(state))
         return prediction if state.current_side is player else -prediction
+
+    def predict_states_for_player(self, states: Sequence[GameState], player: Side) -> list[float]:
+        values: list[float | None] = []
+        feature_batch: list[list[float]] = []
+        feature_indices: list[int] = []
+        for state in states:
+            if state.is_done:
+                if state.winner is None:
+                    values.append(0.0)
+                else:
+                    values.append(1.0 if state.winner is player else -1.0)
+                continue
+            values.append(None)
+            feature_indices.append(len(values) - 1)
+            feature_batch.append(encode_state_vector(state))
+
+        predictions = self.predict_many(feature_batch)
+        for index, prediction in zip(feature_indices, predictions):
+            state = states[index]
+            values[index] = prediction if state.current_side is player else -prediction
+        return [float(value) for value in values]
 
     def train_step(self, example: TrainingExample, learning_rate: float) -> float:
         sparse_features = example.sparse_features or nonzero_features(example.features)
@@ -231,12 +288,31 @@ class NeuralValueBot(Bot):
         neural_score = self.model.predict_state_for_player(after, player) * self.neural_scale
         return heuristic_score * self.heuristic_scale + neural_score
 
+    def score_action_batch(
+        self,
+        candidates: Sequence[tuple[GameState, GameState, Action]],
+        player: Side,
+    ) -> list[float]:
+        if not candidates:
+            return []
+        after_states = [after for _, after, _ in candidates]
+        neural_scores = self.model.predict_states_for_player(after_states, player)
+        scores: list[float] = []
+        for (before, after, action), neural_score in zip(candidates, neural_scores):
+            heuristic_score = self.heuristic.score_action(before, after, action, player)
+            scores.append(heuristic_score * self.heuristic_scale + neural_score * self.neural_scale)
+        return scores
+
     def choose_greedy_action(self, state: GameState, legal: list[Action], player: Side) -> Action:
-        scored: list[tuple[float, float, Action]] = []
+        candidates: list[tuple[GameState, GameState, Action]] = []
         for action in legal:
             after = state.clone()
             after.apply_unchecked(action)
-            scored.append((self.score_action(state, after, action, player), self.rng.random(), action))
+            candidates.append((state, after, action))
+        scored = [
+            (score, self.rng.random(), action)
+            for score, (_, _, action) in zip(self.score_action_batch(candidates, player), candidates)
+        ]
         scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
         return scored[0][2]
 
@@ -246,12 +322,16 @@ class NeuralValueBot(Bot):
         width = max(1, self.search_width)
         decay = 0.92
 
-        frontier: list[tuple[float, float, Action, GameState]] = []
-        all_paths: list[tuple[float, float, Action, GameState]] = []
+        initial_candidates: list[tuple[GameState, GameState, Action]] = []
         for action in legal:
             after = state.clone()
             after.apply_unchecked(action)
-            path = (self.score_action(state, after, action, player), self.rng.random(), action, after)
+            initial_candidates.append((state, after, action))
+
+        frontier: list[tuple[float, float, Action, GameState]] = []
+        all_paths: list[tuple[float, float, Action, GameState]] = []
+        for score, (_, after, action) in zip(self.score_action_batch(initial_candidates, player), initial_candidates):
+            path = (score, self.rng.random(), action, after)
             frontier.append(path)
             all_paths.append(path)
 
@@ -259,22 +339,28 @@ class NeuralValueBot(Bot):
         frontier = frontier[:width]
 
         for depth in range(1, depth_limit):
-            expanded: list[tuple[float, float, Action, GameState]] = []
+            candidate_rows: list[tuple[float, float, Action, GameState, GameState, Action]] = []
             for cumulative_score, tie_breaker, first_action, branch_state in frontier:
                 if branch_state.is_done or branch_state.current_side is not player:
                     continue
                 for action in branch_state.legal_actions():
                     after = branch_state.clone()
                     after.apply_unchecked(action)
-                    step_score = self.score_action(branch_state, after, action, player)
-                    path = (
-                        cumulative_score + step_score * (decay**depth),
-                        tie_breaker,
-                        first_action,
-                        after,
-                    )
-                    expanded.append(path)
-                    all_paths.append(path)
+                    candidate_rows.append((cumulative_score, tie_breaker, first_action, branch_state, after, action))
+            step_scores = self.score_action_batch(
+                [(branch_state, after, action) for _, _, _, branch_state, after, action in candidate_rows],
+                player,
+            )
+            expanded: list[tuple[float, float, Action, GameState]] = []
+            for step_score, (cumulative_score, tie_breaker, first_action, _, after, _) in zip(step_scores, candidate_rows):
+                path = (
+                    cumulative_score + step_score * (decay**depth),
+                    tie_breaker,
+                    first_action,
+                    after,
+                )
+                expanded.append(path)
+                all_paths.append(path)
             if not expanded:
                 break
             expanded.sort(key=lambda item: (item[0], item[1]), reverse=True)
@@ -423,6 +509,22 @@ def load_examples(path: str, *, limit: int | None = None) -> list[TrainingExampl
             examples.append(example_from_json(line))
             if limit is not None and len(examples) >= limit:
                 break
+    return examples
+
+
+def load_examples_from_paths(
+    paths: Sequence[str],
+    *,
+    limit: int | None = None,
+    per_dataset_limit: int | None = None,
+) -> list[TrainingExample]:
+    examples: list[TrainingExample] = []
+    for path in paths:
+        remaining = None if limit is None else limit - len(examples)
+        if remaining is not None and remaining <= 0:
+            break
+        path_limit = per_dataset_limit if remaining is None else min(remaining, per_dataset_limit or remaining)
+        examples.extend(load_examples(path, limit=path_limit))
     return examples
 
 
@@ -897,28 +999,61 @@ def generate_game_examples(
     exploration_rate: float = 0.0,
     sampling_top_k: int = 1,
     sampling_temperature: float = 0.0,
+    teacher: TeacherMode = "heuristic",
+    teacher_model_path: str | None = None,
+    teacher_neural_scale: float = 120.0,
+    teacher_heuristic_scale: float = 1.0,
+    teacher_neural_search_width: int = 3,
+    teacher_neural_search_depth: int | None = 4,
 ) -> list[TrainingExample]:
     state = new_game(seed=seed, map_name=map_name)
-    bots = {
-        Side.BLUE: ExploratoryHeuristicBot(
-            weights,
-            seed=seed + 1,
-            search_width=search_width,
-            search_depth=search_depth,
-            exploration_rate=exploration_rate,
-            sampling_top_k=sampling_top_k,
-            sampling_temperature=sampling_temperature,
-        ),
-        Side.RED: ExploratoryHeuristicBot(
-            weights,
-            seed=seed + 2,
-            search_width=search_width,
-            search_depth=search_depth,
-            exploration_rate=exploration_rate,
-            sampling_top_k=sampling_top_k,
-            sampling_temperature=sampling_temperature,
-        ),
-    }
+    if teacher == "heuristic":
+        bots = {
+            Side.BLUE: ExploratoryHeuristicBot(
+                weights,
+                seed=seed + 1,
+                search_width=search_width,
+                search_depth=search_depth,
+                exploration_rate=exploration_rate,
+                sampling_top_k=sampling_top_k,
+                sampling_temperature=sampling_temperature,
+            ),
+            Side.RED: ExploratoryHeuristicBot(
+                weights,
+                seed=seed + 2,
+                search_width=search_width,
+                search_depth=search_depth,
+                exploration_rate=exploration_rate,
+                sampling_top_k=sampling_top_k,
+                sampling_temperature=sampling_temperature,
+            ),
+        }
+    elif teacher == "neural":
+        if not teacher_model_path:
+            raise ValueError("--teacher-model is required when --teacher neural.")
+        model = ValueNetwork.load(teacher_model_path)
+        bots = {
+            Side.BLUE: NeuralValueBot(
+                model,
+                fallback_weights=weights,
+                seed=seed + 1,
+                neural_scale=teacher_neural_scale,
+                heuristic_scale=teacher_heuristic_scale,
+                search_width=teacher_neural_search_width,
+                search_depth=teacher_neural_search_depth,
+            ),
+            Side.RED: NeuralValueBot(
+                model,
+                fallback_weights=weights,
+                seed=seed + 2,
+                neural_scale=teacher_neural_scale,
+                heuristic_scale=teacher_heuristic_scale,
+                search_width=teacher_neural_search_width,
+                search_depth=teacher_neural_search_depth,
+            ),
+        }
+    else:
+        raise ValueError("--teacher must be one of: heuristic, neural.")
     pending: list[tuple[list[float], int, Side, int]] = []
     steps = 0
     turn_safety = state.config.max_half_turns * 8
@@ -955,7 +1090,25 @@ def generate_game_examples(
 
 
 def generate_game_examples_task(
-    task: tuple[int, dict[str, float], str, int, int | None, int, int, TargetMode, float, int, float],
+    task: tuple[
+        int,
+        dict[str, float],
+        str,
+        int,
+        int | None,
+        int,
+        int,
+        TargetMode,
+        float,
+        int,
+        float,
+        TeacherMode,
+        str | None,
+        float,
+        float,
+        int,
+        int | None,
+    ],
 ) -> list[TrainingExample]:
     (
         seed,
@@ -969,6 +1122,12 @@ def generate_game_examples_task(
         exploration_rate,
         sampling_top_k,
         sampling_temperature,
+        teacher,
+        teacher_model_path,
+        teacher_neural_scale,
+        teacher_heuristic_scale,
+        teacher_neural_search_width,
+        teacher_neural_search_depth,
     ) = task
     return generate_game_examples(
         seed=seed,
@@ -982,6 +1141,12 @@ def generate_game_examples_task(
         exploration_rate=exploration_rate,
         sampling_top_k=sampling_top_k,
         sampling_temperature=sampling_temperature,
+        teacher=teacher,
+        teacher_model_path=teacher_model_path,
+        teacher_neural_scale=teacher_neural_scale,
+        teacher_heuristic_scale=teacher_heuristic_scale,
+        teacher_neural_search_width=teacher_neural_search_width,
+        teacher_neural_search_depth=teacher_neural_search_depth,
     )
 
 
@@ -1002,9 +1167,19 @@ def generate_self_play_dataset(
     exploration_rate: float = 0.0,
     sampling_top_k: int = 1,
     sampling_temperature: float = 0.0,
+    teacher: TeacherMode = "heuristic",
+    teacher_model_path: str | None = None,
+    teacher_neural_scale: float = 120.0,
+    teacher_heuristic_scale: float = 1.0,
+    teacher_neural_search_width: int = 3,
+    teacher_neural_search_depth: int | None = 4,
 ) -> int:
     if target_mode not in {"outcome", "margin", "shaped"}:
         raise ValueError("--target must be one of: outcome, margin, shaped.")
+    if teacher not in {"heuristic", "neural"}:
+        raise ValueError("--teacher must be one of: heuristic, neural.")
+    if teacher == "neural" and not teacher_model_path:
+        raise ValueError("--teacher-model is required when --teacher neural.")
     if exploration_rate < 0.0 or exploration_rate > 1.0:
         raise ValueError("--exploration-rate must be between 0 and 1.")
     if sampling_top_k < 1:
@@ -1023,7 +1198,8 @@ def generate_self_play_dataset(
         print(
             f"[neural generate] writing {games} games to {output_path} "
             f"(search_width={search_width}, search_depth={search_depth}, target={target_mode}, "
-            f"exploration={exploration_rate}, top_k={sampling_top_k}, temperature={sampling_temperature})",
+            f"teacher={teacher}, exploration={exploration_rate}, top_k={sampling_top_k}, "
+            f"temperature={sampling_temperature})",
             flush=True,
         )
     tasks = [
@@ -1039,6 +1215,12 @@ def generate_self_play_dataset(
             exploration_rate,
             sampling_top_k,
             sampling_temperature,
+            teacher,
+            teacher_model_path,
+            teacher_neural_scale,
+            teacher_heuristic_scale,
+            teacher_neural_search_width,
+            teacher_neural_search_depth,
         )
         for game_index in range(games)
     ]
@@ -1087,13 +1269,14 @@ def generate_self_play_dataset(
 
 def train_value_model(
     *,
-    dataset_path: str,
+    dataset_path: str | Sequence[str],
     model_path: str,
     hidden_size: int = 48,
     epochs: int = 8,
     learning_rate: float = 0.003,
     seed: int = 13,
     limit: int | None = None,
+    per_dataset_limit: int | None = None,
     progress: bool = False,
     backend: TrainBackend = "auto",
     batch_size: int = 256,
@@ -1102,9 +1285,14 @@ def train_value_model(
     early_stop_patience: int = 0,
     early_stop_min_delta: float = 0.0,
 ) -> list[float]:
-    examples = load_examples(dataset_path, limit=limit)
+    dataset_paths = [dataset_path] if isinstance(dataset_path, str) else list(dataset_path)
+    if not dataset_paths:
+        raise ValueError("At least one training dataset is required.")
+    if per_dataset_limit is not None and per_dataset_limit < 1:
+        raise ValueError("--per-data-limit must be at least 1.")
+    examples = load_examples_from_paths(dataset_paths, limit=limit, per_dataset_limit=per_dataset_limit)
     if not examples:
-        raise ValueError(f"No training examples found in {dataset_path}.")
+        raise ValueError(f"No training examples found in {dataset_paths}.")
     chosen_backend = resolve_train_backend(backend)
     if batch_size < 1:
         raise ValueError("--batch-size must be at least 1.")
@@ -1121,6 +1309,7 @@ def train_value_model(
         nonzero_counts = [len(example.sparse_features or nonzero_features(example.features)) for example in examples]
         print(
             f"[neural train] loaded examples={len(examples)} "
+            f"datasets={len(dataset_paths)} "
             f"train={len(training_examples)} validation={len(validation_examples)} "
             f"input_size={len(examples[0].features)} hidden_size={hidden_size} "
             f"avg_nonzero={sum(nonzero_counts) / len(nonzero_counts):.1f} "
@@ -1170,8 +1359,9 @@ def train_value_model(
         raise ValueError(f"Unknown training backend: {backend}")
 
     metadata: dict[str, object] = {
-        "dataset": dataset_path,
+        "dataset": dataset_paths[0] if len(dataset_paths) == 1 else dataset_paths,
         "examples": len(examples),
+        "per_dataset_limit": per_dataset_limit,
         "training_examples": len(training_examples),
         "validation_examples": len(validation_examples),
         "validation_fraction": validation_fraction,
@@ -1479,6 +1669,103 @@ def run_value_gauntlet(
     }
 
 
+def wilson_lower_bound(score_rate: float, total_games: int, *, z: float = 1.96) -> float:
+    if total_games <= 0:
+        return 0.0
+    denominator = 1.0 + z * z / total_games
+    center = score_rate + z * z / (2.0 * total_games)
+    margin = z * math.sqrt((score_rate * (1.0 - score_rate) + z * z / (4.0 * total_games)) / total_games)
+    return max(0.0, (center - margin) / denominator)
+
+
+def run_champion_gauntlet(
+    *,
+    candidate_model_path: str,
+    champion_model_path: str,
+    games: int = 8,
+    seed: int = 101,
+    weights: dict[str, float] | None = None,
+    weights_path: str | None = None,
+    extra_opponent_models: Sequence[str] = (),
+    include_baseline_opponents: bool = True,
+    map_name: str = "plains",
+    heuristic_search_width: int = 3,
+    heuristic_search_depth: int | None = 6,
+    neural_scale: float = 120.0,
+    heuristic_scale: float = 1.0,
+    neural_search_width: int = 1,
+    neural_search_depth: int | None = 1,
+    min_head_to_head_score: float = 0.55,
+    min_overall_score: float = 0.60,
+    min_head_to_head_lower_bound: float = 0.50,
+    progress: bool = False,
+) -> dict[str, object]:
+    if os.path.abspath(candidate_model_path) == os.path.abspath(champion_model_path):
+        raise ValueError("Candidate and champion model paths must be different.")
+
+    opponent_models = [champion_model_path]
+    for path in extra_opponent_models:
+        if os.path.abspath(path) != os.path.abspath(champion_model_path):
+            opponent_models.append(path)
+
+    result = run_value_gauntlet(
+        model_path=candidate_model_path,
+        games=games,
+        seed=seed,
+        weights=weights,
+        weights_path=weights_path,
+        neural_opponent_models=opponent_models,
+        auto_neural_opponents=False,
+        include_baseline_opponents=include_baseline_opponents,
+        map_name=map_name,
+        heuristic_search_width=heuristic_search_width,
+        heuristic_search_depth=heuristic_search_depth,
+        neural_scale=neural_scale,
+        heuristic_scale=heuristic_scale,
+        neural_search_width=neural_search_width,
+        neural_search_depth=neural_search_depth,
+        progress=progress,
+    )
+
+    champion_basename = os.path.basename(champion_model_path)
+    champion_row = next(
+        (
+            row
+            for row in result["opponents"]
+            if row.get("kind") == "neural" and str(row.get("opponent", "")).endswith(champion_basename)
+        ),
+        None,
+    )
+    if champion_row is None:
+        raise ValueError(f"Champion opponent was not evaluated: {champion_model_path}")
+
+    head_to_head_score = float(champion_row["score_rate"])
+    head_to_head_games = int(champion_row["total_games"])
+    head_to_head_lower_bound = wilson_lower_bound(head_to_head_score, head_to_head_games)
+    overall_score = float(result["overall"]["score_rate"])
+    promote = (
+        head_to_head_score >= min_head_to_head_score
+        and overall_score >= min_overall_score
+        and head_to_head_lower_bound >= min_head_to_head_lower_bound
+    )
+    result["champion_decision"] = {
+        "candidate_model": candidate_model_path,
+        "champion_model": champion_model_path,
+        "promote": promote,
+        "reason": "candidate cleared promotion thresholds" if promote else "candidate did not clear promotion thresholds",
+        "head_to_head_score_rate": head_to_head_score,
+        "head_to_head_games": head_to_head_games,
+        "head_to_head_lower_bound": head_to_head_lower_bound,
+        "overall_score_rate": overall_score,
+        "thresholds": {
+            "min_head_to_head_score": min_head_to_head_score,
+            "min_overall_score": min_overall_score,
+            "min_head_to_head_lower_bound": min_head_to_head_lower_bound,
+        },
+    }
+    return result
+
+
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Generate and train neural value models for Grids AI.")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -1518,16 +1805,36 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default=0.0,
         help="Softmax temperature for top-k teacher sampling. Zero keeps deterministic planner play.",
     )
+    generate.add_argument(
+        "--teacher",
+        default="heuristic",
+        choices=["heuristic", "neural"],
+        help="Teacher used to play self-play games.",
+    )
+    generate.add_argument(
+        "--teacher-model",
+        help="Neural value model JSON used when --teacher neural.",
+    )
+    generate.add_argument("--teacher-neural-scale", type=float, default=120.0)
+    generate.add_argument("--teacher-heuristic-scale", type=float, default=1.0)
+    generate.add_argument("--teacher-neural-search-width", type=int, default=3)
+    generate.add_argument("--teacher-neural-search-depth", type=int, default=4)
     generate.add_argument("--quiet", action="store_true", help="Suppress lightweight per-game progress output.")
 
     train = subparsers.add_parser("train", help="Train a value network.")
-    train.add_argument("--data", default="neural_data/selfplay.jsonl")
+    train.add_argument(
+        "--data",
+        action="append",
+        default=None,
+        help="Training JSONL dataset. Can be passed more than once to blend datasets.",
+    )
     train.add_argument("--model", default="checkpoints/value_model.json")
     train.add_argument("--hidden-size", type=int, default=48)
     train.add_argument("--epochs", type=int, default=8)
     train.add_argument("--learning-rate", type=float, default=0.003)
     train.add_argument("--seed", type=int, default=13)
     train.add_argument("--limit", type=int)
+    train.add_argument("--per-data-limit", type=int, help="Maximum examples to load from each --data file.")
     train.add_argument(
         "--backend",
         default="auto",
@@ -1584,6 +1891,43 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     gauntlet.add_argument("--output", help="Optional JSON file for gauntlet results.")
     gauntlet.add_argument("--quiet", action="store_true", help="Suppress per-opponent progress output.")
 
+    champion = subparsers.add_parser(
+        "champion",
+        help="Evaluate a candidate model and decide whether it should replace the current champion.",
+    )
+    champion.add_argument("--candidate", required=True, help="Candidate neural value model JSON.")
+    champion.add_argument(
+        "--champion",
+        default="checkpoints/value_model_torch_128_shaped_1000_300hp.json",
+        help="Current champion neural value model JSON.",
+    )
+    champion.add_argument("--games", type=int, default=8, help="Games per side against each opponent.")
+    champion.add_argument("--seed", type=int, default=101)
+    champion.add_argument("--weights", help="Optional trained heuristic weights JSON.")
+    champion.add_argument("--map", default="plains", choices=["plains", "desert"])
+    champion.add_argument("--heuristic-search-width", type=int, default=3)
+    champion.add_argument("--heuristic-search-depth", type=int, default=6)
+    champion.add_argument("--neural-scale", type=float, default=120.0)
+    champion.add_argument("--heuristic-scale", type=float, default=1.0)
+    champion.add_argument("--neural-search-width", type=int, default=1)
+    champion.add_argument("--neural-search-depth", type=int, default=1)
+    champion.add_argument(
+        "--opponent-model",
+        action="append",
+        default=[],
+        help="Additional neural checkpoint to include after the champion. Can be passed more than once.",
+    )
+    champion.add_argument(
+        "--only-neural-opponents",
+        action="store_true",
+        help="Skip random and heuristic baselines; useful for faster checkpoint head-to-heads.",
+    )
+    champion.add_argument("--min-head-to-head-score", type=float, default=0.55)
+    champion.add_argument("--min-overall-score", type=float, default=0.60)
+    champion.add_argument("--min-head-to-head-lower-bound", type=float, default=0.50)
+    champion.add_argument("--output", help="Optional JSON file for champion decision results.")
+    champion.add_argument("--quiet", action="store_true", help="Suppress per-opponent progress output.")
+
     inspect = subparsers.add_parser("inspect", help="Print encoder dimensions for a new game.")
     inspect.add_argument("--seed", type=int, default=1)
     inspect.add_argument("--map", default="plains", choices=["plains", "desert"])
@@ -1613,19 +1957,26 @@ def main(argv: Sequence[str] | None = None) -> int:
             exploration_rate=args.exploration_rate,
             sampling_top_k=args.sampling_top_k,
             sampling_temperature=args.sampling_temperature,
+            teacher=args.teacher,
+            teacher_model_path=args.teacher_model,
+            teacher_neural_scale=args.teacher_neural_scale,
+            teacher_heuristic_scale=args.teacher_heuristic_scale,
+            teacher_neural_search_width=args.teacher_neural_search_width,
+            teacher_neural_search_depth=args.teacher_neural_search_depth,
         )
         print(f"Wrote {count} examples to {args.output}")
         return 0
     if args.command == "train":
         try:
             history = train_value_model(
-                dataset_path=args.data,
+                dataset_path=args.data or ["neural_data/selfplay.jsonl"],
                 model_path=args.model,
                 hidden_size=args.hidden_size,
                 epochs=args.epochs,
                 learning_rate=args.learning_rate,
                 seed=args.seed,
                 limit=args.limit,
+                per_dataset_limit=args.per_data_limit,
                 progress=not args.quiet,
                 backend=args.backend,
                 batch_size=args.batch_size,
@@ -1662,6 +2013,39 @@ def main(argv: Sequence[str] | None = None) -> int:
             heuristic_scale=args.heuristic_scale,
             neural_search_width=args.neural_search_width,
             neural_search_depth=args.neural_search_depth,
+            progress=not args.quiet,
+        )
+        payload = json.dumps(result, indent=2, sort_keys=True)
+        if args.output:
+            directory = os.path.dirname(args.output)
+            if directory:
+                os.makedirs(directory, exist_ok=True)
+            with open(args.output, "w", encoding="utf-8") as handle:
+                handle.write(payload)
+                handle.write("\n")
+        print(payload)
+        return 0
+    if args.command == "champion":
+        weights = load_weights(args.weights) if args.weights else None
+        result = run_champion_gauntlet(
+            candidate_model_path=args.candidate,
+            champion_model_path=args.champion,
+            games=args.games,
+            seed=args.seed,
+            weights=weights,
+            weights_path=args.weights,
+            extra_opponent_models=args.opponent_model,
+            include_baseline_opponents=not args.only_neural_opponents,
+            map_name=args.map,
+            heuristic_search_width=args.heuristic_search_width,
+            heuristic_search_depth=args.heuristic_search_depth,
+            neural_scale=args.neural_scale,
+            heuristic_scale=args.heuristic_scale,
+            neural_search_width=args.neural_search_width,
+            neural_search_depth=args.neural_search_depth,
+            min_head_to_head_score=args.min_head_to_head_score,
+            min_overall_score=args.min_overall_score,
+            min_head_to_head_lower_bound=args.min_head_to_head_lower_bound,
             progress=not args.quiet,
         )
         payload = json.dumps(result, indent=2, sort_keys=True)

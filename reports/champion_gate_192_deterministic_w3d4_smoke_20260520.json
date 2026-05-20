@@ -1,0 +1,58 @@
+{
+  "champion_decision": {
+    "candidate_model": "checkpoints/value_model_torch_192_shaped_800_deterministic_300hp_20260505-0703.json",
+    "champion_model": "checkpoints/value_model_torch_128_shaped_1000_300hp.json",
+    "head_to_head_games": 2,
+    "head_to_head_lower_bound": 0.09452865480086611,
+    "head_to_head_score_rate": 0.5,
+    "overall_score_rate": 0.5,
+    "promote": false,
+    "reason": "candidate did not clear promotion thresholds",
+    "thresholds": {
+      "min_head_to_head_lower_bound": 0.0,
+      "min_head_to_head_score": 0.55,
+      "min_overall_score": 0.55
+    }
+  },
+  "elapsed_seconds": 58.46884409990162,
+  "games_per_side": 1,
+  "heuristic_scale": 1.0,
+  "hidden_size": 192,
+  "input_size": 925,
+  "map": "plains",
+  "model": "checkpoints/value_model_torch_192_shaped_800_deterministic_300hp_20260505-0703.json",
+  "neural_scale": 120.0,
+  "neural_search_depth": 4,
+  "neural_search_width": 3,
+  "opponents": [
+    {
+      "average_half_turns": 49.0,
+      "blue_wins": 1,
+      "draws": 0,
+      "games_per_side": 1,
+      "kind": "neural",
+      "losses": 1,
+      "metadata": {
+        "heuristic_scale": 1.0,
+        "hidden_size": 128,
+        "model": "checkpoints/value_model_torch_128_shaped_1000_300hp.json",
+        "neural_scale": 120.0,
+        "search_depth": 4,
+        "search_width": 3
+      },
+      "opponent": "neural:value_model_torch_128_shaped_1000_300hp.json",
+      "red_wins": 0,
+      "score_rate": 0.5,
+      "total_games": 2,
+      "wins": 1
+    }
+  ],
+  "overall": {
+    "average_half_turns": 49.0,
+    "draws": 0,
+    "losses": 1,
+    "score_rate": 0.5,
+    "wins": 1
+  },
+  "total_games": 2
+}
