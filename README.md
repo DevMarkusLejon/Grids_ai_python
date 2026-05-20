@@ -102,6 +102,23 @@ or drag-and-drop controls for playing blue.
 - The red side is controlled by an in-browser heuristic AI using the latest bundled trained weights
   plus a short same-turn beam search.
 
+The portfolio build also includes an AI progress dashboard at [`web/ai-lab.html`](./web/ai-lab.html).
+It reads [`web/assets/model-registry.json`](./web/assets/model-registry.json), which is generated
+from completed gauntlet and champion-gate reports:
+
+```bash
+python -m grids_ai.model_registry --output web/assets/model-registry.json
+```
+
+or on Windows:
+
+```powershell
+scripts\update_model_registry.ps1
+```
+
+The registry gives each model an Elo-style experimental rating, shows champion head-to-head results,
+and keeps the browser page grounded in the same reports used by the autonomous training loop.
+
 For GitHub Pages, publish the repository root. The root [`index.html`](./index.html) redirects to
 the static web app under `web/`, [`.nojekyll`](./.nojekyll) keeps Pages from applying Jekyll
 processing to the assets, and [`.github/workflows/pages.yml`](./.github/workflows/pages.yml)

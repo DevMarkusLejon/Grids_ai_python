@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Grids AI Lab - Model Progress</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <div class="page-shell lab-shell">
+    <header class="topbar lab-topbar">
+      <div>
+        <p class="eyebrow">Autonomous Training Lab</p>
+        <h1>Grids AI Lab</h1>
+        <p class="subtitle">A live-ish model registry built from local gauntlets, champion gates, and training artifacts.</p>
+      </div>
+      <nav class="lab-nav" aria-label="Portfolio navigation">
+        <a class="action-btn ghost lab-link" href="./index.html">Play Game</a>
+      </nav>
+    </header>
+
+    <main class="lab-layout">
+      <section class="lab-hero">
+        <div class="lab-metric">
+          <span>Current Champion</span>
+          <strong id="champion-model">Loading</strong>
+        </div>
+        <div class="lab-metric">
+          <span>Tracked Models</span>
+          <strong id="model-count">0</strong>
+        </div>
+        <div class="lab-metric">
+          <span>Reports</span>
+          <strong id="report-count">0</strong>
+        </div>
+        <div class="lab-metric">
+          <span>Generated</span>
+          <strong id="generated-at">-</strong>
+        </div>
+      </section>
+
+      <section class="panel lab-panel">
+        <div class="panel-heading">
+          <h2>Leaderboard</h2>
+          <span>Elo-style estimate</span>
+        </div>
+        <div class="lab-table-wrap">
+          <table class="lab-table">
+            <thead>
+              <tr>
+                <th>Rank</th>
+                <th>Model</th>
+                <th>Rating</th>
+                <th>Overall</th>
+                <th>Vs Champion</th>
+                <th>Games</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody id="leaderboard-body"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel lab-panel">
+        <div class="panel-heading">
+          <h2>Latest Reports</h2>
+          <span>Promotion trail</span>
+        </div>
+        <div id="report-list" class="lab-report-list"></div>
+      </section>
+    </main>
+  </div>
+
+  <script src="./ai-lab.js"></script>
+</body>
+</html>
