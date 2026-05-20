@@ -21,51 +21,20 @@
       "epochs": 80,
       "examples": 79085,
       "learning_rate": 0.003,
+      "model_kind": "value",
       "training_examples": 71177,
       "validation_examples": 7908
     },
     "model": "checkpoints/value_model_torch_128_shaped_1000_300hp.json",
     "promoted": false,
-    "rank": 2,
-    "rating": 1076.3,
+    "rank": 1,
+    "rating": 1094.9,
     "reports": 9,
     "wins": 311
   },
   "champion_model": "checkpoints/value_model_torch_128_shaped_1000_300hp.json",
-  "generated_at": "2026-05-20T20:52:21+00:00",
+  "generated_at": "2026-05-20T21:24:24+00:00",
   "models": [
-    {
-      "best_overall_score": 0.9,
-      "draws": 0,
-      "games": 100,
-      "head_to_head_games": 2,
-      "head_to_head_vs_champion": 0.5,
-      "hidden_size": 192,
-      "input_size": 925,
-      "is_current_champion": false,
-      "latest_overall_score": 0.5,
-      "latest_report": "reports/champion_gate_192_deterministic_w3d4_smoke_20260520.json",
-      "losses": 37,
-      "metadata": {
-        "batch_size": 512,
-        "best_epoch": 51,
-        "best_validation_loss": 0.35139259696006775,
-        "completed_epochs": 61,
-        "dataset": "neural_data/selfplay_shaped_800_deterministic_300hp_20260505-014626.jsonl",
-        "device": "cpu",
-        "epochs": 100,
-        "examples": 63314,
-        "learning_rate": 0.003,
-        "training_examples": 56983,
-        "validation_examples": 6331
-      },
-      "model": "checkpoints/value_model_torch_192_shaped_800_deterministic_300hp_20260505-0703.json",
-      "promoted": false,
-      "rank": 1,
-      "rating": 1091.1,
-      "reports": 4,
-      "wins": 63
-    },
     {
       "best_overall_score": 0.7916666666666666,
       "draws": 0,
@@ -88,15 +57,49 @@
         "epochs": 80,
         "examples": 79085,
         "learning_rate": 0.003,
+        "model_kind": "value",
         "training_examples": 71177,
         "validation_examples": 7908
       },
       "model": "checkpoints/value_model_torch_128_shaped_1000_300hp.json",
       "promoted": false,
-      "rank": 2,
-      "rating": 1076.3,
+      "rank": 1,
+      "rating": 1094.9,
       "reports": 9,
       "wins": 311
+    },
+    {
+      "best_overall_score": 0.9,
+      "draws": 0,
+      "games": 100,
+      "head_to_head_games": 2,
+      "head_to_head_vs_champion": 0.5,
+      "hidden_size": 192,
+      "input_size": 925,
+      "is_current_champion": false,
+      "latest_overall_score": 0.5,
+      "latest_report": "reports/champion_gate_192_deterministic_w3d4_smoke_20260520.json",
+      "losses": 37,
+      "metadata": {
+        "batch_size": 512,
+        "best_epoch": 51,
+        "best_validation_loss": 0.35139259696006775,
+        "completed_epochs": 61,
+        "dataset": "neural_data/selfplay_shaped_800_deterministic_300hp_20260505-014626.jsonl",
+        "device": "cpu",
+        "epochs": 100,
+        "examples": 63314,
+        "learning_rate": 0.003,
+        "model_kind": "value",
+        "training_examples": 56983,
+        "validation_examples": 6331
+      },
+      "model": "checkpoints/value_model_torch_192_shaped_800_deterministic_300hp_20260505-0703.json",
+      "promoted": false,
+      "rank": 2,
+      "rating": 1091.1,
+      "reports": 4,
+      "wins": 63
     },
     {
       "best_overall_score": 0.6625,
@@ -120,6 +123,7 @@
         "epochs": 100,
         "examples": 63314,
         "learning_rate": 0.003,
+        "model_kind": "value",
         "training_examples": 56983,
         "validation_examples": 6331
       },
@@ -152,6 +156,7 @@
         "epochs": 100,
         "examples": 117303,
         "learning_rate": 0.003,
+        "model_kind": "value",
         "training_examples": 105573,
         "validation_examples": 11730
       },
@@ -161,6 +166,49 @@
       "rating": 1058.0,
       "reports": 1,
       "wins": 32
+    },
+    {
+      "best_overall_score": 0.875,
+      "draws": 0,
+      "games": 16,
+      "head_to_head_games": null,
+      "head_to_head_vs_champion": null,
+      "hidden_size": 128,
+      "input_size": 925,
+      "is_current_champion": false,
+      "latest_overall_score": 0.875,
+      "latest_report": "reports/gauntlet_policy_value_128_blend_beam_20260520-231637.json",
+      "losses": 2,
+      "metadata": {
+        "action_size": 10783,
+        "batch_size": 512,
+        "best_epoch": 18,
+        "best_validation_loss": 1.1417128235585727,
+        "best_validation_policy_accuracy": 0.308584686774942,
+        "completed_epochs": 18,
+        "dataset": [
+          "neural_data/selfplay_neural_champion_80_shaped_300hp_20260520-211300.jsonl",
+          "neural_data/selfplay_neural_champion_40_shaped_300hp_20260520-131138.jsonl",
+          "neural_data/selfplay_shaped_800_deterministic_300hp_20260505-014626.jsonl"
+        ],
+        "dataset_count": 3,
+        "device": "cpu",
+        "epochs": 18,
+        "examples": 17240,
+        "learning_rate": 0.003,
+        "model_kind": "policy_value",
+        "per_dataset_limit": 8000,
+        "policy_loss_weight": 0.25,
+        "training_examples": 15516,
+        "validation_examples": 1724,
+        "value_loss_weight": 1.0
+      },
+      "model": "checkpoints/policy_value_torch_128_blend_20260520-231637.json",
+      "promoted": false,
+      "rank": 5,
+      "rating": 1056.1,
+      "reports": 1,
+      "wins": 14
     },
     {
       "best_overall_score": 1.0,
@@ -190,13 +238,14 @@
         "epochs": 50,
         "examples": 25328,
         "learning_rate": 0.003,
+        "model_kind": "value",
         "per_dataset_limit": 10000,
         "training_examples": 22795,
         "validation_examples": 2533
       },
       "model": "checkpoints/value_model_torch_192_balanced_neural_shaped_20260520.json",
       "promoted": true,
-      "rank": 5,
+      "rank": 6,
       "rating": 1054.3,
       "reports": 2,
       "wins": 34
@@ -229,13 +278,14 @@
         "epochs": 70,
         "examples": 33240,
         "learning_rate": 0.003,
+        "model_kind": "value",
         "per_dataset_limit": 12000,
         "training_examples": 29916,
         "validation_examples": 3324
       },
       "model": "checkpoints/value_model_torch_192_blend_neural_champion_80_shaped_20260520-223011.json",
       "promoted": false,
-      "rank": 6,
+      "rank": 7,
       "rating": 1054.2,
       "reports": 1,
       "wins": 34
@@ -266,12 +316,13 @@
         "epochs": 40,
         "examples": 30000,
         "learning_rate": 0.003,
+        "model_kind": "value",
         "training_examples": 27000,
         "validation_examples": 3000
       },
       "model": "checkpoints/value_model_torch_128_blend_neural_champion_30_shaped_30000_20260520.json",
       "promoted": false,
-      "rank": 7,
+      "rank": 8,
       "rating": 1051.9,
       "reports": 2,
       "wins": 17
@@ -298,12 +349,13 @@
         "epochs": 100,
         "examples": 79085,
         "learning_rate": 0.003,
+        "model_kind": "value",
         "training_examples": 71177,
         "validation_examples": 7908
       },
       "model": "checkpoints/value_model_torch_128_shaped_1000_300hp_seed20260505_20260505-005152.json",
       "promoted": false,
-      "rank": 8,
+      "rank": 9,
       "rating": 1048.7,
       "reports": 1,
       "wins": 52
@@ -330,13 +382,14 @@
         "epochs": 60,
         "examples": 6176,
         "learning_rate": 0.003,
+        "model_kind": "value",
         "per_dataset_limit": null,
         "training_examples": 5558,
         "validation_examples": 618
       },
       "model": "checkpoints/value_model_torch_192_neural_champion_80_shaped_300hp_20260520-211300.json",
       "promoted": false,
-      "rank": 9,
+      "rank": 10,
       "rating": 1048.2,
       "reports": 1,
       "wins": 25
@@ -363,12 +416,13 @@
         "epochs": 100,
         "examples": 95361,
         "learning_rate": 0.003,
+        "model_kind": "value",
         "training_examples": 85825,
         "validation_examples": 9536
       },
       "model": "checkpoints/value_model_torch_128_shaped_1200_clean_300hp_20260505-002857.json",
       "promoted": false,
-      "rank": 10,
+      "rank": 11,
       "rating": 1033.8,
       "reports": 2,
       "wins": 64
@@ -395,12 +449,13 @@
         "epochs": 100,
         "examples": 117303,
         "learning_rate": 0.003,
+        "model_kind": "value",
         "training_examples": 105573,
         "validation_examples": 11730
       },
       "model": "checkpoints/value_model_torch_128_shaped_1500_300hp_20260505-001244.json",
       "promoted": false,
-      "rank": 11,
+      "rank": 12,
       "rating": 1022.2,
       "reports": 1,
       "wins": 46
@@ -427,12 +482,13 @@
         "epochs": 100,
         "examples": 79085,
         "learning_rate": 0.003,
+        "model_kind": "value",
         "training_examples": 71177,
         "validation_examples": 7908
       },
       "model": "checkpoints/value_model_torch_128_shaped_1000_300hp_seed20260507_20260507-211633.json",
       "promoted": false,
-      "rank": 12,
+      "rank": 13,
       "rating": 1011.9,
       "reports": 2,
       "wins": 58
@@ -453,11 +509,12 @@
         "dataset": "neural_data/selfplay-20260504-170440.jsonl",
         "epochs": 12,
         "examples": 3538,
-        "learning_rate": 0.003
+        "learning_rate": 0.003,
+        "model_kind": "value"
       },
       "model": "checkpoints/value_model-20260504-170440.json",
       "promoted": false,
-      "rank": 13,
+      "rank": 14,
       "rating": 1000.0,
       "reports": 0,
       "wins": 0
@@ -478,11 +535,12 @@
         "dataset": "neural_data/selfplay_1000_20260504-183425.jsonl",
         "epochs": 20,
         "examples": 42375,
-        "learning_rate": 0.003
+        "learning_rate": 0.003,
+        "model_kind": "value"
       },
       "model": "checkpoints/value_model_1000_20260504-183425.json",
       "promoted": false,
-      "rank": 14,
+      "rank": 15,
       "rating": 1000.0,
       "reports": 0,
       "wins": 0
@@ -503,11 +561,12 @@
         "dataset": "neural_data/selfplay_500_20260504-172842.jsonl",
         "epochs": 16,
         "examples": 20903,
-        "learning_rate": 0.003
+        "learning_rate": 0.003,
+        "model_kind": "value"
       },
       "model": "checkpoints/value_model_500_20260504-172842.json",
       "promoted": false,
-      "rank": 15,
+      "rank": 16,
       "rating": 1000.0,
       "reports": 0,
       "wins": 0
@@ -530,11 +589,12 @@
         "device": "cpu",
         "epochs": 8,
         "examples": 42375,
-        "learning_rate": 0.003
+        "learning_rate": 0.003,
+        "model_kind": "value"
       },
       "model": "checkpoints/value_model_torch.json",
       "promoted": false,
-      "rank": 16,
+      "rank": 17,
       "rating": 1000.0,
       "reports": 0,
       "wins": 0
@@ -557,11 +617,12 @@
         "device": "cpu",
         "epochs": 20,
         "examples": 42375,
-        "learning_rate": 0.003
+        "learning_rate": 0.003,
+        "model_kind": "value"
       },
       "model": "checkpoints/value_model_torch_128.json",
       "promoted": false,
-      "rank": 17,
+      "rank": 18,
       "rating": 1000.0,
       "reports": 0,
       "wins": 0
@@ -588,12 +649,13 @@
         "epochs": 80,
         "examples": 42455,
         "learning_rate": 0.003,
+        "model_kind": "value",
         "training_examples": 38209,
         "validation_examples": 4246
       },
       "model": "checkpoints/value_model_torch_128_shaped_1000.json",
       "promoted": false,
-      "rank": 18,
+      "rank": 19,
       "rating": 1000.0,
       "reports": 0,
       "wins": 0
@@ -620,12 +682,13 @@
         "epochs": 80,
         "examples": 5494,
         "learning_rate": 0.003,
+        "model_kind": "value",
         "training_examples": 4945,
         "validation_examples": 549
       },
       "model": "checkpoints/value_model_torch_128_shaped_120.json",
       "promoted": false,
-      "rank": 19,
+      "rank": 20,
       "rating": 1000.0,
       "reports": 0,
       "wins": 0
@@ -652,12 +715,13 @@
         "epochs": 80,
         "examples": 42375,
         "learning_rate": 0.003,
+        "model_kind": "value",
         "training_examples": 38137,
         "validation_examples": 4238
       },
       "model": "checkpoints/value_model_torch_128_val.json",
       "promoted": false,
-      "rank": 20,
+      "rank": 21,
       "rating": 1000.0,
       "reports": 0,
       "wins": 0
@@ -684,12 +748,13 @@
         "epochs": 30,
         "examples": 3064,
         "learning_rate": 0.003,
+        "model_kind": "value",
         "training_examples": 2758,
         "validation_examples": 306
       },
       "model": "checkpoints/value_model_torch_128_neural_champion_40_shaped_300hp_20260520-131138.json",
       "promoted": false,
-      "rank": 21,
+      "rank": 22,
       "rating": 980.4,
       "reports": 1,
       "wins": 8
@@ -716,18 +781,111 @@
         "epochs": 20,
         "examples": 2264,
         "learning_rate": 0.003,
+        "model_kind": "value",
         "training_examples": 2038,
         "validation_examples": 226
       },
       "model": "checkpoints/value_model_torch_128_neural_champion_30_300hp_20260520-110922.json",
       "promoted": false,
-      "rank": 22,
+      "rank": 23,
       "rating": 977.8,
       "reports": 1,
       "wins": 8
+    },
+    {
+      "best_overall_score": 0.875,
+      "draws": 0,
+      "games": 32,
+      "head_to_head_games": null,
+      "head_to_head_vs_champion": null,
+      "hidden_size": 64,
+      "input_size": 925,
+      "is_current_champion": false,
+      "latest_overall_score": 0.25,
+      "latest_report": "reports/gauntlet_policy_value_64_smoke_mcts24_value_select_20260520-230649.json",
+      "losses": 23,
+      "metadata": {
+        "action_size": 10783,
+        "batch_size": 256,
+        "best_epoch": 2,
+        "best_validation_loss": 2.497697591781616,
+        "best_validation_policy_accuracy": 0.1825,
+        "completed_epochs": 5,
+        "dataset": [
+          "neural_data/selfplay_neural_champion_80_shaped_300hp_20260520-211300.jsonl",
+          "neural_data/selfplay_shaped_800_deterministic_300hp_20260505-014626.jsonl"
+        ],
+        "dataset_count": 2,
+        "device": "cpu",
+        "epochs": 6,
+        "examples": 4000,
+        "learning_rate": 0.003,
+        "model_kind": "policy_value",
+        "per_dataset_limit": 2000,
+        "policy_loss_weight": 0.25,
+        "training_examples": 3600,
+        "validation_examples": 400,
+        "value_loss_weight": 1.0
+      },
+      "model": "checkpoints/policy_value_torch_64_smoke_20260520-230649.json",
+      "promoted": false,
+      "rank": 24,
+      "rating": 846.8,
+      "reports": 4,
+      "wins": 9
     }
   ],
   "reports": [
+    {
+      "head_to_head_score": null,
+      "model": "checkpoints/policy_value_torch_128_blend_20260520-231637.json",
+      "mtime": 1779312169.2378738,
+      "overall_score": 0.875,
+      "promoted": false,
+      "reason": null,
+      "report": "reports/gauntlet_policy_value_128_blend_beam_20260520-231637.json",
+      "total_games": 16
+    },
+    {
+      "head_to_head_score": null,
+      "model": "checkpoints/policy_value_torch_64_smoke_20260520-230649.json",
+      "mtime": 1779311642.7108533,
+      "overall_score": 0.25,
+      "promoted": false,
+      "reason": null,
+      "report": "reports/gauntlet_policy_value_64_smoke_mcts24_value_select_20260520-230649.json",
+      "total_games": 8
+    },
+    {
+      "head_to_head_score": null,
+      "model": "checkpoints/policy_value_torch_64_smoke_20260520-230649.json",
+      "mtime": 1779311501.5737581,
+      "overall_score": 0.0,
+      "promoted": false,
+      "reason": null,
+      "report": "reports/gauntlet_policy_value_64_smoke_mcts24_bootstrap_20260520-230649.json",
+      "total_games": 8
+    },
+    {
+      "head_to_head_score": null,
+      "model": "checkpoints/policy_value_torch_64_smoke_20260520-230649.json",
+      "mtime": 1779311375.6723855,
+      "overall_score": 0.875,
+      "promoted": false,
+      "reason": null,
+      "report": "reports/gauntlet_policy_value_64_smoke_beam_20260520-230649.json",
+      "total_games": 8
+    },
+    {
+      "head_to_head_score": null,
+      "model": "checkpoints/policy_value_torch_64_smoke_20260520-230649.json",
+      "mtime": 1779311254.6231434,
+      "overall_score": 0.0,
+      "promoted": false,
+      "reason": null,
+      "report": "reports/gauntlet_policy_value_64_smoke_mcts24_20260520-230649.json",
+      "total_games": 8
+    },
     {
       "head_to_head_score": 0.5,
       "model": "checkpoints/value_model_torch_192_blend_neural_champion_80_shaped_20260520-223011.json",
@@ -1020,8 +1178,8 @@
     }
   ],
   "summary": {
-    "models": 22,
-    "rated_models": 14,
-    "reports": 29
+    "models": 24,
+    "rated_models": 16,
+    "reports": 34
   }
 }

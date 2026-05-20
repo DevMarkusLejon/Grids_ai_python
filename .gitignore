@@ -16,6 +16,7 @@ tmp_tests/
 checkpoints/long-*.json
 checkpoints/value_model*.json
 checkpoints/value_model_*.json
+checkpoints/policy_value*.json
 
 .DS_Store
 Thumbs.db

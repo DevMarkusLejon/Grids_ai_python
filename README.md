@@ -243,6 +243,41 @@ python -m grids_ai.neural train --backend torch --batch-size 512 --data neural_d
 python -m grids_ai.neural train --backend numpy --batch-size 512 --data neural_data/selfplay.jsonl --model checkpoints/value_model.json --epochs 8
 ```
 
+Train the newer shared policy/value model. The value head predicts the position outcome, while the
+policy head learns which indexed action the teacher chose:
+
+```bash
+python -m grids_ai.neural train-policy --data neural_data/selfplay_shaped.jsonl --hidden-size 128 --batch-size 512 --model checkpoints/policy_value_model.json --epochs 12
+```
+
+Policy/value models can be evaluated by the same gauntlet command. By default they use the policy
+head as a legal-action prior inside the existing beam search:
+
+```bash
+python -m grids_ai.neural gauntlet --model checkpoints/policy_value_model.json --games 4 --weights trained_weights.json --policy-scale 18 --neural-search-width 3 --neural-search-depth 4
+```
+
+They can also be used directly by the playable CLI:
+
+```bash
+python -m grids_ai.cli --blue human --red neural --model checkpoints/policy_value_model.json --policy-scale 18 --neural-search-width 3 --neural-search-depth 4
+```
+
+There is also an experimental same-turn MCTS mode guided by the policy/value network. Early smoke
+tests show it is useful as research scaffolding, but policy-prior beam search is currently the
+stronger default:
+
+```bash
+python -m grids_ai.neural gauntlet --model checkpoints/policy_value_model.json --games 2 --weights trained_weights.json --mcts-simulations 24 --mcts-max-children 16 --mcts-depth 5
+```
+
+For a bounded local policy/value experiment that also refreshes the AI Lab dashboard:
+
+```powershell
+scripts\run_policy_value_iteration.ps1
+scripts\run_policy_value_iteration.ps1 -Data neural_data\fresh_selfplay.jsonl,neural_data\older_selfplay.jsonl
+```
+
 Smoke-test the neural value bot against random play:
 
 ```bash

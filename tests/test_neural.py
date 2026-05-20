@@ -6,6 +6,8 @@ import tempfile
 import unittest
 
 from grids_ai.neural import (
+    PolicyValueMCTSBot,
+    PolicyValueNetwork,
     TrainingExample,
     ValueNetwork,
     generate_self_play_dataset,
@@ -16,8 +18,10 @@ from grids_ai.neural import (
     run_value_gauntlet,
     split_examples,
     target_value,
+    train_policy_value_model,
     train_value_model,
 )
+from grids_ai.encoding import action_space_for_state
 from grids_ai.data import Side
 from grids_ai.engine import new_game
 
@@ -59,6 +63,27 @@ class NeuralTests(unittest.TestCase):
         final_loss = (model.predict(example.features) - example.value) ** 2
 
         self.assertLess(final_loss, first_loss)
+
+    def test_policy_value_network_can_score_legal_actions(self) -> None:
+        state = new_game(seed=2)
+        action_size = action_space_for_state(state).size
+        model = PolicyValueNetwork(
+            input_size=925,
+            hidden_size=3,
+            action_size=action_size,
+            w1=[[0.0 for _ in range(925)] for _ in range(3)],
+            b1=[0.0, 0.1, -0.1],
+            value_w=[0.1, -0.2, 0.3],
+            value_b=0.0,
+            policy_w=[[0.0, 0.0, 0.0] for _ in range(action_size)],
+            policy_b=[0.0 for _ in range(action_size)],
+        )
+        legal = state.legal_actions()
+        priors = model.action_priors(state, legal)
+
+        self.assertEqual(len(priors), len(legal))
+        self.assertAlmostEqual(sum(priors), 1.0, places=6)
+        self.assertIn(PolicyValueMCTSBot(model, simulations=2, max_children=4, mcts_depth=2).choose_action(state), legal)
 
     def test_self_play_dataset_can_train_tiny_model(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -175,6 +200,46 @@ class NeuralTests(unittest.TestCase):
         self.assertEqual(len(examples), 8)
         self.assertEqual(payload["metadata"]["examples"], 8)
         self.assertEqual(payload["metadata"]["dataset"], [first_path, second_path])
+
+    def test_policy_value_training_writes_policy_model(self) -> None:
+        try:
+            import torch  # noqa: F401
+        except ImportError:
+            self.skipTest("PyTorch is not installed.")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            data_path = os.path.join(temp_dir, "examples.jsonl")
+            model_path = os.path.join(temp_dir, "policy_value.json")
+            with open(data_path, "w", encoding="utf-8") as handle:
+                for index in range(10):
+                    handle.write(
+                        json.dumps(
+                            {
+                                "features": [float(index % 2), 1.0, 0.0],
+                                "value": 1.0 if index % 2 else -1.0,
+                                "action_index": index % 4,
+                            }
+                        )
+                    )
+                    handle.write("\n")
+
+            history = train_policy_value_model(
+                dataset_path=data_path,
+                model_path=model_path,
+                hidden_size=4,
+                action_size=4,
+                epochs=1,
+                batch_size=4,
+                validation_fraction=0.2,
+            )
+
+            with open(model_path, "r", encoding="utf-8") as handle:
+                payload = json.load(handle)
+
+        self.assertEqual(len(history), 1)
+        self.assertEqual(payload["kind"], "policy_value")
+        self.assertEqual(payload["action_size"], 4)
+        self.assertIn("validation_policy_accuracy_history", payload["metadata"])
 
     def test_multi_dataset_loader_can_cap_each_dataset(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

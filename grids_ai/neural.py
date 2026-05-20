@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import argparse
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import json
@@ -13,7 +13,7 @@ from typing import Callable, Iterable, Sequence
 
 from .bots import DEFAULT_WEIGHTS, Bot, HeuristicBot, RandomBot, load_weights
 from .data import Side
-from .encoding import encode_action_index, encode_state_vector, encoded_state_size
+from .encoding import action_space_for_state, encode_action_index, encode_state_vector, encoded_state_size
 from .engine import Action, GameState, new_game
 from .training import play_match
 
@@ -263,6 +263,226 @@ class ValueNetwork:
         return cls.from_dict(data)
 
 
+class PolicyValueNetwork:
+    """Shared-trunk policy/value MLP exported as plain JSON for local inference."""
+
+    def __init__(
+        self,
+        input_size: int,
+        hidden_size: int,
+        action_size: int,
+        *,
+        w1: list[list[float]],
+        b1: list[float],
+        value_w: list[float],
+        value_b: float,
+        policy_w: list[list[float]],
+        policy_b: list[float],
+    ) -> None:
+        self.input_size = input_size
+        self.hidden_size = hidden_size
+        self.action_size = action_size
+        self.w1 = w1
+        self.b1 = b1
+        self.value_w = value_w
+        self.value_b = value_b
+        self.policy_w = policy_w
+        self.policy_b = policy_b
+
+    def _numpy_weights(self):
+        cache = getattr(self, "_numpy_cache", None)
+        if cache is not None:
+            return cache
+        try:
+            import numpy as np
+        except ImportError:
+            self._numpy_cache = False
+            return False
+        cache = (
+            np.asarray(self.w1, dtype=np.float32),
+            np.asarray(self.b1, dtype=np.float32),
+            np.asarray(self.value_w, dtype=np.float32),
+            np.asarray(self.value_b, dtype=np.float32),
+            np.asarray(self.policy_w, dtype=np.float32),
+            np.asarray(self.policy_b, dtype=np.float32),
+        )
+        self._numpy_cache = cache
+        return cache
+
+    def _hidden(self, features: Sequence[float]) -> list[float]:
+        hidden: list[float] = []
+        for row, bias in zip(self.w1, self.b1):
+            activation = bias
+            for feature_index, value in enumerate(features):
+                if value:
+                    activation += row[feature_index] * value
+            hidden.append(math.tanh(activation))
+        return hidden
+
+    def predict_value(self, features: Sequence[float]) -> float:
+        numpy_weights = self._numpy_weights()
+        if numpy_weights:
+            try:
+                import numpy as np
+
+                w1, b1, value_w, value_b, _, _ = numpy_weights
+                feature_array = np.asarray(features, dtype=np.float32)
+                hidden = np.tanh(w1 @ feature_array + b1)
+                return float(np.tanh(hidden @ value_w + value_b))
+            except (TypeError, ValueError):
+                pass
+        hidden = self._hidden(features)
+        output = self.value_b
+        for weight, value in zip(self.value_w, hidden):
+            output += weight * value
+        return math.tanh(output)
+
+    def predict_values(self, feature_batch: Sequence[Sequence[float]]) -> list[float]:
+        if not feature_batch:
+            return []
+        numpy_weights = self._numpy_weights()
+        if numpy_weights:
+            try:
+                import numpy as np
+
+                w1, b1, value_w, value_b, _, _ = numpy_weights
+                features = np.asarray(feature_batch, dtype=np.float32)
+                hidden = np.tanh(features @ w1.T + b1)
+                values = np.tanh(hidden @ value_w + value_b)
+                return [float(value) for value in values.tolist()]
+            except (TypeError, ValueError):
+                pass
+        return [self.predict_value(features) for features in feature_batch]
+
+    def predict_policy_logits(self, features: Sequence[float], action_indices: Sequence[int]) -> list[float]:
+        if not action_indices:
+            return []
+        numpy_weights = self._numpy_weights()
+        if numpy_weights:
+            try:
+                import numpy as np
+
+                w1, b1, _, _, policy_w, policy_b = numpy_weights
+                feature_array = np.asarray(features, dtype=np.float32)
+                hidden = np.tanh(w1 @ feature_array + b1)
+                indices = np.asarray(action_indices, dtype=np.int64)
+                logits = policy_w[indices] @ hidden + policy_b[indices]
+                return [float(value) for value in logits.tolist()]
+            except (TypeError, ValueError, IndexError):
+                pass
+        hidden = self._hidden(features)
+        logits: list[float] = []
+        for action_index in action_indices:
+            if action_index < 0 or action_index >= self.action_size:
+                logits.append(float("-inf"))
+                continue
+            output = self.policy_b[action_index]
+            row = self.policy_w[action_index]
+            for weight, value in zip(row, hidden):
+                output += weight * value
+            logits.append(output)
+        return logits
+
+    def action_priors(self, state: GameState, legal: Sequence[Action]) -> list[float]:
+        if not legal:
+            return []
+        action_indices = [encode_action_index(state, action) for action in legal]
+        logits = self.predict_policy_logits(encode_state_vector(state), action_indices)
+        finite_logits = [value for value in logits if math.isfinite(value)]
+        if not finite_logits:
+            return [1.0 / len(legal) for _ in legal]
+        maximum = max(finite_logits)
+        exp_values = [math.exp(max(-60.0, min(60.0, value - maximum))) if math.isfinite(value) else 0.0 for value in logits]
+        total = sum(exp_values)
+        if total <= 0.0:
+            return [1.0 / len(legal) for _ in legal]
+        return [value / total for value in exp_values]
+
+    def predict_state_for_player(self, state: GameState, player: Side) -> float:
+        if state.is_done:
+            if state.winner is None:
+                return 0.0
+            return 1.0 if state.winner is player else -1.0
+        prediction = self.predict_value(encode_state_vector(state))
+        return prediction if state.current_side is player else -prediction
+
+    def predict_states_for_player(self, states: Sequence[GameState], player: Side) -> list[float]:
+        values: list[float | None] = []
+        feature_batch: list[list[float]] = []
+        feature_indices: list[int] = []
+        for state in states:
+            if state.is_done:
+                if state.winner is None:
+                    values.append(0.0)
+                else:
+                    values.append(1.0 if state.winner is player else -1.0)
+                continue
+            values.append(None)
+            feature_indices.append(len(values) - 1)
+            feature_batch.append(encode_state_vector(state))
+        predictions = self.predict_values(feature_batch)
+        for index, prediction in zip(feature_indices, predictions):
+            state = states[index]
+            values[index] = prediction if state.current_side is player else -prediction
+        return [float(value) for value in values]
+
+    def to_dict(self, metadata: dict[str, object] | None = None) -> dict[str, object]:
+        payload: dict[str, object] = {
+            "version": MODEL_VERSION,
+            "kind": "policy_value",
+            "input_size": self.input_size,
+            "hidden_size": self.hidden_size,
+            "action_size": self.action_size,
+            "w1": self.w1,
+            "b1": self.b1,
+            "value_w": self.value_w,
+            "value_b": self.value_b,
+            "policy_w": self.policy_w,
+            "policy_b": self.policy_b,
+        }
+        if metadata:
+            payload["metadata"] = metadata
+        return payload
+
+    def save(self, path: str, metadata: dict[str, object] | None = None) -> None:
+        directory = os.path.dirname(path)
+        if directory:
+            os.makedirs(directory, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(self.to_dict(metadata), handle)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, object]) -> "PolicyValueNetwork":
+        return cls(
+            input_size=int(data["input_size"]),
+            hidden_size=int(data["hidden_size"]),
+            action_size=int(data["action_size"]),
+            w1=[[float(value) for value in row] for row in data["w1"]],
+            b1=[float(value) for value in data["b1"]],
+            value_w=[float(value) for value in data["value_w"]],
+            value_b=float(data["value_b"]),
+            policy_w=[[float(value) for value in row] for row in data["policy_w"]],
+            policy_b=[float(value) for value in data["policy_b"]],
+        )
+
+    @classmethod
+    def load(cls, path: str) -> "PolicyValueNetwork":
+        with open(path, "r", encoding="utf-8") as handle:
+            data = json.load(handle)
+        return cls.from_dict(data)
+
+
+NeuralModel = ValueNetwork | PolicyValueNetwork
+
+
+def load_neural_model(path: str) -> NeuralModel:
+    with open(path, "r", encoding="utf-8") as handle:
+        data = json.load(handle)
+    if data.get("kind") == "policy_value" or "policy_w" in data:
+        return PolicyValueNetwork.from_dict(data)
+    return ValueNetwork.from_dict(data)
+
+
 class NeuralValueBot(Bot):
     def __init__(
         self,
@@ -377,6 +597,261 @@ class NeuralValueBot(Bot):
         if self.search_width <= 1 and (self.search_depth is None or self.search_depth <= 1):
             return self.choose_greedy_action(state, legal, player)
         return self.choose_planned_action(state, legal, player)
+
+
+class PolicyValueBot(NeuralValueBot):
+    """Policy/value bot that uses the policy head as a legal-action prior."""
+
+    def __init__(
+        self,
+        model: PolicyValueNetwork,
+        *,
+        fallback_weights: dict[str, float] | None = None,
+        seed: int | None = None,
+        neural_scale: float = 120.0,
+        heuristic_scale: float = 1.0,
+        policy_scale: float = 18.0,
+        search_width: int = 1,
+        search_depth: int | None = 1,
+    ) -> None:
+        super().__init__(
+            model,
+            fallback_weights=fallback_weights,
+            seed=seed,
+            neural_scale=neural_scale,
+            heuristic_scale=heuristic_scale,
+            search_width=search_width,
+            search_depth=search_depth,
+        )
+        self.model = model
+        self.policy_scale = policy_scale
+
+    def score_action_batch(
+        self,
+        candidates: Sequence[tuple[GameState, GameState, Action]],
+        player: Side,
+    ) -> list[float]:
+        scores = super().score_action_batch(candidates, player)
+        priors_by_state: dict[int, dict[Action, float]] = {}
+        for index, (before, _, action) in enumerate(candidates):
+            cache_key = id(before)
+            action_priors = priors_by_state.get(cache_key)
+            if action_priors is None:
+                legal = before.legal_actions()
+                priors = self.model.action_priors(before, legal)
+                action_priors = {legal_action: prior for legal_action, prior in zip(legal, priors)}
+                priors_by_state[cache_key] = action_priors
+            scores[index] += self.policy_scale * action_priors.get(action, 0.0)
+        return scores
+
+
+@dataclass
+class MCTSChild:
+    action: Action
+    node: "MCTSNode"
+    prior: float
+    visits: int = 0
+    value_sum: float = 0.0
+
+    @property
+    def value(self) -> float:
+        return self.value_sum / self.visits if self.visits else 0.0
+
+
+@dataclass
+class MCTSNode:
+    state: GameState
+    visits: int = 0
+    children: list[MCTSChild] = field(default_factory=list)
+    expanded: bool = False
+
+
+class PolicyValueMCTSBot(PolicyValueBot):
+    """Bounded same-turn MCTS guided by policy priors and neural value leaves."""
+
+    def __init__(
+        self,
+        model: PolicyValueNetwork,
+        *,
+        fallback_weights: dict[str, float] | None = None,
+        seed: int | None = None,
+        neural_scale: float = 120.0,
+        heuristic_scale: float = 1.0,
+        policy_scale: float = 18.0,
+        search_width: int = 1,
+        search_depth: int | None = 1,
+        simulations: int = 64,
+        exploration: float = 1.25,
+        max_children: int = 24,
+        mcts_depth: int = 7,
+    ) -> None:
+        super().__init__(
+            model,
+            fallback_weights=fallback_weights,
+            seed=seed,
+            neural_scale=neural_scale,
+            heuristic_scale=heuristic_scale,
+            policy_scale=policy_scale,
+            search_width=search_width,
+            search_depth=search_depth,
+        )
+        self.simulations = max(1, simulations)
+        self.exploration = exploration
+        self.max_children = max(1, max_children)
+        self.mcts_depth = max(1, mcts_depth)
+
+    def evaluate_leaf(self, state: GameState, player: Side) -> float:
+        return self.model.predict_state_for_player(state, player)
+
+    def expand_node(self, node: MCTSNode, player: Side, depth: int) -> float:
+        state = node.state
+        if state.is_done or state.current_side is not player or depth >= self.mcts_depth:
+            node.expanded = True
+            return self.evaluate_leaf(state, player)
+
+        legal = state.legal_actions()
+        priors = self.model.action_priors(state, legal)
+        candidates: list[tuple[GameState, GameState, Action]] = []
+        for action in legal:
+            after = state.clone()
+            after.apply_unchecked(action)
+            candidates.append((state, after, action))
+        scores = self.score_action_batch(candidates, player)
+        rows = [
+            {
+                "action": action,
+                "after": after,
+                "prior": prior,
+                "score": score,
+            }
+            for (_, after, action), prior, score in zip(candidates, priors, scores)
+        ]
+        chosen_by_action: dict[Action, dict[str, object]] = {}
+        for row in sorted(rows, key=lambda item: float(item["prior"]), reverse=True)[: self.max_children]:
+            chosen_by_action[row["action"]] = row
+        for row in sorted(rows, key=lambda item: float(item["score"]), reverse=True)[: self.max_children]:
+            if len(chosen_by_action) >= self.max_children and row["action"] not in chosen_by_action:
+                continue
+            chosen_by_action[row["action"]] = row
+        end_turn = next((row for row in rows if row["action"].kind == "end_turn"), None)
+        if end_turn is not None and all(action.kind != "end_turn" for action in chosen_by_action):
+            if len(chosen_by_action) >= self.max_children:
+                weakest = min(chosen_by_action.values(), key=lambda item: float(item["prior"]) + float(item["score"]) / 1000.0)
+                chosen_by_action.pop(weakest["action"])
+            chosen_by_action[end_turn["action"]] = end_turn
+
+        node.children = []
+        for row in chosen_by_action.values():
+            child = MCTSChild(
+                action=row["action"],
+                node=MCTSNode(row["after"]),
+                prior=float(row["prior"]),
+                visits=1,
+                value_sum=math.tanh(float(row["score"]) / 200.0),
+            )
+            node.children.append(child)
+        node.expanded = True
+        return self.evaluate_leaf(state, player)
+
+    def select_child(self, node: MCTSNode) -> MCTSChild:
+        parent_visits = max(1, node.visits)
+        exploration = self.exploration * math.sqrt(parent_visits)
+        return max(
+            node.children,
+            key=lambda child: (
+                child.value + exploration * child.prior / (1 + child.visits),
+                self.rng.random(),
+            ),
+        )
+
+    def choose_mcts_action(self, state: GameState, legal: list[Action], player: Side) -> Action:
+        root = MCTSNode(state.clone())
+        self.expand_node(root, player, 0)
+        if not root.children:
+            return legal[0]
+
+        for _ in range(self.simulations):
+            node = root
+            visited_nodes = [root]
+            visited_children: list[MCTSChild] = []
+            depth = 0
+            while node.expanded and node.children and depth < self.mcts_depth:
+                child = self.select_child(node)
+                visited_children.append(child)
+                node = child.node
+                visited_nodes.append(node)
+                depth += 1
+                if node.state.is_done or node.state.current_side is not player:
+                    break
+            value = self.expand_node(node, player, depth)
+            for visited_node in visited_nodes:
+                visited_node.visits += 1
+            for child in visited_children:
+                child.visits += 1
+                child.value_sum += value
+
+        # Visit-count selection over-favors high-prior "end turn" in this same-turn planner.
+        # Use the backed-up root value as the final choice while visits still guide exploration.
+        best = max(root.children, key=lambda child: (child.value, child.visits, child.prior, self.rng.random()))
+        return best.action
+
+    def choose_action(self, state: GameState) -> Action:
+        legal = state.legal_actions()
+        if not legal:
+            raise ValueError("No legal actions available.")
+        return self.choose_mcts_action(state, legal, state.current_side)
+
+
+def make_neural_bot(
+    model: NeuralModel,
+    *,
+    fallback_weights: dict[str, float] | None = None,
+    seed: int | None = None,
+    neural_scale: float = 120.0,
+    heuristic_scale: float = 1.0,
+    policy_scale: float = 18.0,
+    search_width: int = 1,
+    search_depth: int | None = 1,
+    mcts_simulations: int = 0,
+    mcts_exploration: float = 1.25,
+    mcts_max_children: int = 24,
+    mcts_depth: int = 7,
+) -> Bot:
+    if isinstance(model, PolicyValueNetwork):
+        if mcts_simulations > 0:
+            return PolicyValueMCTSBot(
+                model,
+                fallback_weights=fallback_weights,
+                seed=seed,
+                neural_scale=neural_scale,
+                heuristic_scale=heuristic_scale,
+                policy_scale=policy_scale,
+                search_width=search_width,
+                search_depth=search_depth,
+                simulations=mcts_simulations,
+                exploration=mcts_exploration,
+                max_children=mcts_max_children,
+                mcts_depth=mcts_depth,
+            )
+        return PolicyValueBot(
+            model,
+            fallback_weights=fallback_weights,
+            seed=seed,
+            neural_scale=neural_scale,
+            heuristic_scale=heuristic_scale,
+            policy_scale=policy_scale,
+            search_width=search_width,
+            search_depth=search_depth,
+        )
+    return NeuralValueBot(
+        model,
+        fallback_weights=fallback_weights,
+        seed=seed,
+        neural_scale=neural_scale,
+        heuristic_scale=heuristic_scale,
+        search_width=search_width,
+        search_depth=search_depth,
+    )
 
 
 class ExploratoryHeuristicBot(Bot):
@@ -1031,9 +1506,9 @@ def generate_game_examples(
     elif teacher == "neural":
         if not teacher_model_path:
             raise ValueError("--teacher-model is required when --teacher neural.")
-        model = ValueNetwork.load(teacher_model_path)
+        model = load_neural_model(teacher_model_path)
         bots = {
-            Side.BLUE: NeuralValueBot(
+            Side.BLUE: make_neural_bot(
                 model,
                 fallback_weights=weights,
                 seed=seed + 1,
@@ -1042,7 +1517,7 @@ def generate_game_examples(
                 search_width=teacher_neural_search_width,
                 search_depth=teacher_neural_search_depth,
             ),
-            Side.RED: NeuralValueBot(
+            Side.RED: make_neural_bot(
                 model,
                 fallback_weights=weights,
                 seed=seed + 2,
@@ -1380,6 +1855,328 @@ def train_value_model(
     return history
 
 
+def train_torch_policy_value_model(
+    examples: Sequence[TrainingExample],
+    *,
+    validation_examples: Sequence[TrainingExample],
+    hidden_size: int,
+    action_size: int,
+    epochs: int,
+    learning_rate: float,
+    seed: int,
+    batch_size: int,
+    device: str,
+    value_loss_weight: float,
+    policy_loss_weight: float,
+    early_stop_patience: int,
+    early_stop_min_delta: float,
+    progress: bool,
+) -> tuple[PolicyValueNetwork, list[float], dict[str, object]]:
+    torch = require_torch()
+    if device == "auto":
+        chosen_device = "cuda" if torch.cuda.is_available() else "cpu"
+    else:
+        chosen_device = device
+    target_device = torch.device(chosen_device)
+    torch.manual_seed(seed)
+
+    features = torch.tensor([example.features for example in examples], dtype=torch.float32, device=target_device)
+    value_targets = torch.tensor(
+        [max(-1.0, min(1.0, example.value)) for example in examples],
+        dtype=torch.float32,
+        device=target_device,
+    )
+    action_targets = torch.tensor(
+        [int(example.action_index) for example in examples],
+        dtype=torch.long,
+        device=target_device,
+    )
+    if validation_examples:
+        validation_features = torch.tensor(
+            [example.features for example in validation_examples],
+            dtype=torch.float32,
+            device=target_device,
+        )
+        validation_values = torch.tensor(
+            [max(-1.0, min(1.0, example.value)) for example in validation_examples],
+            dtype=torch.float32,
+            device=target_device,
+        )
+        validation_actions = torch.tensor(
+            [int(example.action_index) for example in validation_examples],
+            dtype=torch.long,
+            device=target_device,
+        )
+    else:
+        validation_features = None
+        validation_values = None
+        validation_actions = None
+
+    input_size = int(features.shape[1])
+
+    class TorchPolicyValueModel(torch.nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.hidden = torch.nn.Linear(input_size, hidden_size)
+            self.value = torch.nn.Linear(hidden_size, 1)
+            self.policy = torch.nn.Linear(hidden_size, action_size)
+            scale = 1.0 / math.sqrt(max(input_size, 1))
+            with torch.no_grad():
+                self.hidden.weight.uniform_(-scale, scale)
+                self.hidden.bias.zero_()
+                self.value.weight.uniform_(-scale, scale)
+                self.value.bias.zero_()
+                self.policy.weight.uniform_(-scale, scale)
+                self.policy.bias.zero_()
+
+        def forward(self, x):
+            hidden = torch.tanh(self.hidden(x))
+            return torch.tanh(self.value(hidden)).squeeze(-1), self.policy(hidden)
+
+    torch_model = TorchPolicyValueModel().to(target_device)
+    optimizer = torch.optim.Adam(torch_model.parameters(), lr=learning_rate)
+    batch_size = max(1, batch_size)
+    rng = random.Random(seed)
+    indices = list(range(len(examples)))
+    history: list[float] = []
+    value_history: list[float] = []
+    policy_history: list[float] = []
+    validation_history: list[float] = []
+    validation_value_history: list[float] = []
+    validation_policy_history: list[float] = []
+    validation_accuracy_history: list[float] = []
+    best_state = {name: value.detach().clone() for name, value in torch_model.state_dict().items()}
+    best_validation_loss = float("inf")
+    best_epoch = 0
+    stale_epochs = 0
+    started_at = time.perf_counter()
+
+    def evaluate_validation() -> tuple[float, float, float, float] | None:
+        if validation_features is None or validation_values is None or validation_actions is None:
+            return None
+        total_value_loss = 0.0
+        total_policy_loss = 0.0
+        correct = 0
+        count = 0
+        with torch.no_grad():
+            for start in range(0, len(validation_examples), batch_size):
+                end = start + batch_size
+                values, logits = torch_model(validation_features[start:end])
+                batch_values = validation_values[start:end]
+                batch_actions = validation_actions[start:end]
+                value_loss = torch.mean((values - batch_values) ** 2)
+                policy_loss = torch.nn.functional.cross_entropy(logits, batch_actions)
+                batch_count = int(len(batch_actions))
+                total_value_loss += float(value_loss.detach().cpu()) * batch_count
+                total_policy_loss += float(policy_loss.detach().cpu()) * batch_count
+                correct += int((torch.argmax(logits, dim=1) == batch_actions).sum().detach().cpu())
+                count += batch_count
+        value_loss = total_value_loss / max(count, 1)
+        policy_loss = total_policy_loss / max(count, 1)
+        total_loss = value_loss * value_loss_weight + policy_loss * policy_loss_weight
+        accuracy = correct / max(count, 1)
+        return total_loss, value_loss, policy_loss, accuracy
+
+    for epoch in range(1, epochs + 1):
+        epoch_started = time.perf_counter()
+        rng.shuffle(indices)
+        total_loss = 0.0
+        total_value_loss = 0.0
+        total_policy_loss = 0.0
+        for start in range(0, len(indices), batch_size):
+            batch_indices = torch.tensor(indices[start : start + batch_size], dtype=torch.long, device=target_device)
+            values, logits = torch_model(features.index_select(0, batch_indices))
+            batch_values = value_targets.index_select(0, batch_indices)
+            batch_actions = action_targets.index_select(0, batch_indices)
+            value_loss = torch.mean((values - batch_values) ** 2)
+            policy_loss = torch.nn.functional.cross_entropy(logits, batch_actions)
+            loss = value_loss * value_loss_weight + policy_loss * policy_loss_weight
+            optimizer.zero_grad(set_to_none=True)
+            loss.backward()
+            optimizer.step()
+            batch_count = len(batch_indices)
+            total_loss += float(loss.detach().cpu()) * batch_count
+            total_value_loss += float(value_loss.detach().cpu()) * batch_count
+            total_policy_loss += float(policy_loss.detach().cpu()) * batch_count
+
+        average_loss = total_loss / len(examples)
+        average_value_loss = total_value_loss / len(examples)
+        average_policy_loss = total_policy_loss / len(examples)
+        history.append(average_loss)
+        value_history.append(average_value_loss)
+        policy_history.append(average_policy_loss)
+        validation_metrics = evaluate_validation()
+        validation_part = ""
+        if validation_metrics is not None:
+            validation_loss, validation_value_loss, validation_policy_loss, validation_accuracy = validation_metrics
+            validation_history.append(validation_loss)
+            validation_value_history.append(validation_value_loss)
+            validation_policy_history.append(validation_policy_loss)
+            validation_accuracy_history.append(validation_accuracy)
+            validation_part = (
+                f" val_loss={validation_loss:.5f}"
+                f" val_value={validation_value_loss:.5f}"
+                f" val_policy={validation_policy_loss:.5f}"
+                f" val_acc={validation_accuracy:.3f}"
+            )
+            if validation_loss < best_validation_loss - early_stop_min_delta:
+                best_validation_loss = validation_loss
+                best_epoch = epoch
+                best_state = {name: value.detach().clone() for name, value in torch_model.state_dict().items()}
+                stale_epochs = 0
+            else:
+                stale_epochs += 1
+
+        if progress:
+            elapsed = time.perf_counter() - started_at
+            print(
+                f"[policy train] epoch {epoch}/{epochs} "
+                f"loss={average_loss:.5f} value={average_value_loss:.5f} "
+                f"policy={average_policy_loss:.5f}{validation_part} "
+                f"epoch={time.perf_counter() - epoch_started:.1f}s elapsed={elapsed:.1f}s",
+                flush=True,
+            )
+
+        if validation_metrics is not None and early_stop_patience > 0 and stale_epochs >= early_stop_patience:
+            if progress:
+                print(
+                    f"[policy train] early stop at epoch {epoch}; "
+                    f"best_epoch={best_epoch} best_val_loss={best_validation_loss:.5f}",
+                    flush=True,
+                )
+            break
+
+    if validation_examples:
+        torch_model.load_state_dict(best_state)
+    with torch.no_grad():
+        model = PolicyValueNetwork(
+            input_size=input_size,
+            hidden_size=hidden_size,
+            action_size=action_size,
+            w1=torch_model.hidden.weight.detach().cpu().tolist(),
+            b1=torch_model.hidden.bias.detach().cpu().tolist(),
+            value_w=torch_model.value.weight.detach().cpu().reshape(-1).tolist(),
+            value_b=float(torch_model.value.bias.detach().cpu().reshape(-1)[0]),
+            policy_w=torch_model.policy.weight.detach().cpu().tolist(),
+            policy_b=torch_model.policy.bias.detach().cpu().tolist(),
+        )
+    metadata = {
+        "training_backend": "torch-policy-value",
+        "batch_size": batch_size,
+        "optimizer": "adam",
+        "device": str(target_device),
+        "torch_version": str(torch.__version__),
+        "value_loss_weight": value_loss_weight,
+        "policy_loss_weight": policy_loss_weight,
+        "value_loss_history": value_history,
+        "policy_loss_history": policy_history,
+        "validation_loss_history": validation_history,
+        "validation_value_loss_history": validation_value_history,
+        "validation_policy_loss_history": validation_policy_history,
+        "validation_policy_accuracy_history": validation_accuracy_history,
+        "best_epoch": best_epoch or len(history),
+        "best_validation_loss": best_validation_loss if validation_examples else None,
+        "best_validation_policy_accuracy": max(validation_accuracy_history) if validation_accuracy_history else None,
+    }
+    return model, history, metadata
+
+
+def train_policy_value_model(
+    *,
+    dataset_path: str | Sequence[str],
+    model_path: str,
+    hidden_size: int = 128,
+    action_size: int | None = None,
+    epochs: int = 12,
+    learning_rate: float = 0.003,
+    seed: int = 37,
+    limit: int | None = None,
+    per_dataset_limit: int | None = None,
+    progress: bool = False,
+    batch_size: int = 256,
+    device: str = "auto",
+    validation_fraction: float = 0.1,
+    early_stop_patience: int = 0,
+    early_stop_min_delta: float = 0.0,
+    value_loss_weight: float = 1.0,
+    policy_loss_weight: float = 0.25,
+    map_name: str = "plains",
+) -> list[float]:
+    dataset_paths = [dataset_path] if isinstance(dataset_path, str) else list(dataset_path)
+    if not dataset_paths:
+        raise ValueError("At least one training dataset is required.")
+    if per_dataset_limit is not None and per_dataset_limit < 1:
+        raise ValueError("--per-data-limit must be at least 1.")
+    if batch_size < 1:
+        raise ValueError("--batch-size must be at least 1.")
+    if early_stop_patience < 0:
+        raise ValueError("--early-stop-patience must be zero or greater.")
+    if early_stop_min_delta < 0:
+        raise ValueError("--early-stop-min-delta must be zero or greater.")
+    if value_loss_weight <= 0.0 or policy_loss_weight <= 0.0:
+        raise ValueError("Policy/value loss weights must be positive.")
+
+    inferred_action_size = action_size or action_space_for_state(new_game(seed=seed, map_name=map_name)).size
+    all_examples = load_examples_from_paths(dataset_paths, limit=limit, per_dataset_limit=per_dataset_limit)
+    examples = [
+        example
+        for example in all_examples
+        if example.action_index is not None and 0 <= int(example.action_index) < inferred_action_size
+    ]
+    if not examples:
+        raise ValueError(f"No policy-labelled examples found in {dataset_paths}.")
+    training_examples, validation_examples = split_examples(
+        examples,
+        validation_fraction=validation_fraction,
+        seed=seed + 2003,
+    )
+    if progress:
+        print(
+            f"[policy train] loaded examples={len(examples)} "
+            f"datasets={len(dataset_paths)} train={len(training_examples)} "
+            f"validation={len(validation_examples)} input_size={len(examples[0].features)} "
+            f"hidden_size={hidden_size} action_size={inferred_action_size}",
+            flush=True,
+        )
+
+    model, history, backend_metadata = train_torch_policy_value_model(
+        training_examples,
+        validation_examples=validation_examples,
+        hidden_size=hidden_size,
+        action_size=inferred_action_size,
+        epochs=epochs,
+        learning_rate=learning_rate,
+        seed=seed,
+        batch_size=batch_size,
+        device=device,
+        value_loss_weight=value_loss_weight,
+        policy_loss_weight=policy_loss_weight,
+        early_stop_patience=early_stop_patience,
+        early_stop_min_delta=early_stop_min_delta,
+        progress=progress,
+    )
+    metadata: dict[str, object] = {
+        "dataset": dataset_paths[0] if len(dataset_paths) == 1 else dataset_paths,
+        "examples": len(examples),
+        "raw_examples": len(all_examples),
+        "per_dataset_limit": per_dataset_limit,
+        "training_examples": len(training_examples),
+        "validation_examples": len(validation_examples),
+        "validation_fraction": validation_fraction,
+        "early_stop_patience": early_stop_patience,
+        "early_stop_min_delta": early_stop_min_delta,
+        "epochs": epochs,
+        "completed_epochs": len(history),
+        "learning_rate": learning_rate,
+        "loss_history": history,
+        "action_size": inferred_action_size,
+        "map": map_name,
+    }
+    metadata.update(backend_metadata)
+    model.save(model_path, metadata=metadata)
+    return history
+
+
 def evaluate_value_bot(
     *,
     model_path: str,
@@ -1387,7 +2184,7 @@ def evaluate_value_bot(
     seed: int = 23,
     weights: dict[str, float] | None = None,
 ) -> dict[str, object]:
-    model = ValueNetwork.load(model_path)
+    model = load_neural_model(model_path)
     fallback_weights = dict(DEFAULT_WEIGHTS)
     if weights:
         fallback_weights.update(weights)
@@ -1395,7 +2192,7 @@ def evaluate_value_bot(
     half_turns: list[int] = []
     for game_index in range(games):
         state = play_match(
-            NeuralValueBot(model, fallback_weights=fallback_weights, seed=seed + game_index),
+            make_neural_bot(model, fallback_weights=fallback_weights, seed=seed + game_index),
             RandomBot(seed=seed + 1000 + game_index),
             seed=seed + 2000 + game_index,
         )
@@ -1407,6 +2204,7 @@ def evaluate_value_bot(
         "games": games,
         "input_size": model.input_size,
         "hidden_size": model.hidden_size,
+        "model_kind": "policy_value" if isinstance(model, PolicyValueNetwork) else "value",
     }
 
 
@@ -1445,8 +2243,13 @@ def build_gauntlet_opponents(
     heuristic_search_depth: int | None = 6,
     neural_scale: float = 120.0,
     heuristic_scale: float = 1.0,
+    policy_scale: float = 18.0,
     neural_search_width: int = 1,
     neural_search_depth: int | None = 1,
+    mcts_simulations: int = 0,
+    mcts_exploration: float = 1.25,
+    mcts_max_children: int = 24,
+    mcts_depth: int = 7,
 ) -> list[GauntletOpponent]:
     opponents: list[GauntletOpponent] = []
 
@@ -1491,27 +2294,38 @@ def build_gauntlet_opponents(
     for path in neural_model_paths:
         if not os.path.exists(path):
             continue
-        model = ValueNetwork.load(path)
+        model = load_neural_model(path)
         opponents.append(
             GauntletOpponent(
                 name=f"neural:{os.path.basename(path)}",
                 kind="neural",
-                make_bot=lambda seed, loaded=model: NeuralValueBot(
+                make_bot=lambda seed, loaded=model: make_neural_bot(
                     loaded,
                     fallback_weights=fallback_weights,
                     seed=seed,
                     neural_scale=neural_scale,
                     heuristic_scale=heuristic_scale,
+                    policy_scale=policy_scale,
                     search_width=neural_search_width,
                     search_depth=neural_search_depth,
+                    mcts_simulations=mcts_simulations,
+                    mcts_exploration=mcts_exploration,
+                    mcts_max_children=mcts_max_children,
+                    mcts_depth=mcts_depth,
                 ),
                 metadata={
                     "model": path,
                     "hidden_size": model.hidden_size,
+                    "model_kind": "policy_value" if isinstance(model, PolicyValueNetwork) else "value",
+                    "action_size": model.action_size if isinstance(model, PolicyValueNetwork) else None,
                     "neural_scale": neural_scale,
                     "heuristic_scale": heuristic_scale,
+                    "policy_scale": policy_scale if isinstance(model, PolicyValueNetwork) else None,
                     "search_width": neural_search_width,
                     "search_depth": neural_search_depth,
+                    "mcts_simulations": mcts_simulations if isinstance(model, PolicyValueNetwork) else 0,
+                    "mcts_max_children": mcts_max_children if isinstance(model, PolicyValueNetwork) else None,
+                    "mcts_depth": mcts_depth if isinstance(model, PolicyValueNetwork) else None,
                 },
             )
         )
@@ -1533,13 +2347,18 @@ def run_value_gauntlet(
     heuristic_search_depth: int | None = 6,
     neural_scale: float = 120.0,
     heuristic_scale: float = 1.0,
+    policy_scale: float = 18.0,
     neural_search_width: int = 1,
     neural_search_depth: int | None = 1,
+    mcts_simulations: int = 0,
+    mcts_exploration: float = 1.25,
+    mcts_max_children: int = 24,
+    mcts_depth: int = 7,
     progress: bool = False,
 ) -> dict[str, object]:
     if games < 1:
         raise ValueError("--games must be at least 1.")
-    model = ValueNetwork.load(model_path)
+    model = load_neural_model(model_path)
     fallback_weights = dict(DEFAULT_WEIGHTS)
     if weights:
         fallback_weights.update(weights)
@@ -1559,8 +2378,13 @@ def run_value_gauntlet(
         heuristic_search_depth=heuristic_search_depth,
         neural_scale=neural_scale,
         heuristic_scale=heuristic_scale,
+        policy_scale=policy_scale,
         neural_search_width=neural_search_width,
         neural_search_depth=neural_search_depth,
+        mcts_simulations=mcts_simulations,
+        mcts_exploration=mcts_exploration,
+        mcts_max_children=mcts_max_children,
+        mcts_depth=mcts_depth,
     )
 
     results: list[dict[str, object]] = []
@@ -1579,14 +2403,19 @@ def run_value_gauntlet(
         half_turns: list[int] = []
         for game_index in range(games):
             game_seed = seed + opponent_index * 10000 + game_index
-            subject_blue = NeuralValueBot(
+            subject_blue = make_neural_bot(
                 model,
                 fallback_weights=fallback_weights,
                 seed=game_seed + 1,
                 neural_scale=neural_scale,
                 heuristic_scale=heuristic_scale,
+                policy_scale=policy_scale,
                 search_width=neural_search_width,
                 search_depth=neural_search_depth,
+                mcts_simulations=mcts_simulations,
+                mcts_exploration=mcts_exploration,
+                mcts_max_children=mcts_max_children,
+                mcts_depth=mcts_depth,
             )
             opponent_red = opponent.make_bot(game_seed + 2)
             blue_state = play_match(subject_blue, opponent_red, seed=game_seed, map_name=map_name)
@@ -1598,14 +2427,19 @@ def run_value_gauntlet(
             half_turns.append(blue_state.half_turns_played)
 
             opponent_blue = opponent.make_bot(game_seed + 1002)
-            subject_red = NeuralValueBot(
+            subject_red = make_neural_bot(
                 model,
                 fallback_weights=fallback_weights,
                 seed=game_seed + 1001,
                 neural_scale=neural_scale,
                 heuristic_scale=heuristic_scale,
+                policy_scale=policy_scale,
                 search_width=neural_search_width,
                 search_depth=neural_search_depth,
+                mcts_simulations=mcts_simulations,
+                mcts_exploration=mcts_exploration,
+                mcts_max_children=mcts_max_children,
+                mcts_depth=mcts_depth,
             )
             red_state = play_match(opponent_blue, subject_red, seed=game_seed, map_name=map_name)
             result = side_result(red_state, Side.RED)
@@ -1650,13 +2484,20 @@ def run_value_gauntlet(
         "model": model_path,
         "input_size": model.input_size,
         "hidden_size": model.hidden_size,
+        "model_kind": "policy_value" if isinstance(model, PolicyValueNetwork) else "value",
+        "action_size": model.action_size if isinstance(model, PolicyValueNetwork) else None,
         "map": map_name,
         "games_per_side": games,
         "total_games": total_games,
         "neural_scale": neural_scale,
         "heuristic_scale": heuristic_scale,
+        "policy_scale": policy_scale if isinstance(model, PolicyValueNetwork) else None,
         "neural_search_width": neural_search_width,
         "neural_search_depth": neural_search_depth,
+        "mcts_simulations": mcts_simulations if isinstance(model, PolicyValueNetwork) else 0,
+        "mcts_exploration": mcts_exploration if isinstance(model, PolicyValueNetwork) else None,
+        "mcts_max_children": mcts_max_children if isinstance(model, PolicyValueNetwork) else None,
+        "mcts_depth": mcts_depth if isinstance(model, PolicyValueNetwork) else None,
         "overall": {
             "wins": overall_wins,
             "draws": overall_draws,
@@ -1693,8 +2534,13 @@ def run_champion_gauntlet(
     heuristic_search_depth: int | None = 6,
     neural_scale: float = 120.0,
     heuristic_scale: float = 1.0,
+    policy_scale: float = 18.0,
     neural_search_width: int = 1,
     neural_search_depth: int | None = 1,
+    mcts_simulations: int = 0,
+    mcts_exploration: float = 1.25,
+    mcts_max_children: int = 24,
+    mcts_depth: int = 7,
     min_head_to_head_score: float = 0.55,
     min_overall_score: float = 0.60,
     min_head_to_head_lower_bound: float = 0.50,
@@ -1722,8 +2568,13 @@ def run_champion_gauntlet(
         heuristic_search_depth=heuristic_search_depth,
         neural_scale=neural_scale,
         heuristic_scale=heuristic_scale,
+        policy_scale=policy_scale,
         neural_search_width=neural_search_width,
         neural_search_depth=neural_search_depth,
+        mcts_simulations=mcts_simulations,
+        mcts_exploration=mcts_exploration,
+        mcts_max_children=mcts_max_children,
+        mcts_depth=mcts_depth,
         progress=progress,
     )
 
@@ -1858,6 +2709,31 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     train.add_argument("--quiet", action="store_true", help="Suppress lightweight per-epoch progress output.")
 
+    train_policy = subparsers.add_parser("train-policy", help="Train a shared policy/value network.")
+    train_policy.add_argument(
+        "--data",
+        action="append",
+        default=None,
+        help="Training JSONL dataset with action_index labels. Can be passed more than once.",
+    )
+    train_policy.add_argument("--model", default="checkpoints/policy_value_model.json")
+    train_policy.add_argument("--hidden-size", type=int, default=128)
+    train_policy.add_argument("--action-size", type=int, help="Policy action-space size. Defaults to the current map.")
+    train_policy.add_argument("--epochs", type=int, default=12)
+    train_policy.add_argument("--learning-rate", type=float, default=0.003)
+    train_policy.add_argument("--seed", type=int, default=37)
+    train_policy.add_argument("--limit", type=int)
+    train_policy.add_argument("--per-data-limit", type=int, help="Maximum examples to load from each --data file.")
+    train_policy.add_argument("--batch-size", type=int, default=256)
+    train_policy.add_argument("--device", default="auto", help="PyTorch device, for example auto, cpu, or cuda.")
+    train_policy.add_argument("--validation-fraction", type=float, default=0.1)
+    train_policy.add_argument("--early-stop-patience", type=int, default=0)
+    train_policy.add_argument("--early-stop-min-delta", type=float, default=0.0)
+    train_policy.add_argument("--value-loss-weight", type=float, default=1.0)
+    train_policy.add_argument("--policy-loss-weight", type=float, default=0.25)
+    train_policy.add_argument("--map", default="plains", choices=["plains", "desert"])
+    train_policy.add_argument("--quiet", action="store_true", help="Suppress lightweight per-epoch progress output.")
+
     evaluate = subparsers.add_parser("evaluate", help="Evaluate a value model against random play.")
     evaluate.add_argument("--model", default="checkpoints/value_model.json")
     evaluate.add_argument("--games", type=int, default=6)
@@ -1874,8 +2750,13 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     gauntlet.add_argument("--heuristic-search-depth", type=int, default=6)
     gauntlet.add_argument("--neural-scale", type=float, default=120.0)
     gauntlet.add_argument("--heuristic-scale", type=float, default=1.0)
+    gauntlet.add_argument("--policy-scale", type=float, default=18.0)
     gauntlet.add_argument("--neural-search-width", type=int, default=1)
     gauntlet.add_argument("--neural-search-depth", type=int, default=1)
+    gauntlet.add_argument("--mcts-simulations", type=int, default=0)
+    gauntlet.add_argument("--mcts-exploration", type=float, default=1.25)
+    gauntlet.add_argument("--mcts-max-children", type=int, default=24)
+    gauntlet.add_argument("--mcts-depth", type=int, default=7)
     gauntlet.add_argument(
         "--opponent-model",
         action="append",
@@ -1909,8 +2790,13 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     champion.add_argument("--heuristic-search-depth", type=int, default=6)
     champion.add_argument("--neural-scale", type=float, default=120.0)
     champion.add_argument("--heuristic-scale", type=float, default=1.0)
+    champion.add_argument("--policy-scale", type=float, default=18.0)
     champion.add_argument("--neural-search-width", type=int, default=1)
     champion.add_argument("--neural-search-depth", type=int, default=1)
+    champion.add_argument("--mcts-simulations", type=int, default=0)
+    champion.add_argument("--mcts-exploration", type=float, default=1.25)
+    champion.add_argument("--mcts-max-children", type=int, default=24)
+    champion.add_argument("--mcts-depth", type=int, default=7)
     champion.add_argument(
         "--opponent-model",
         action="append",
@@ -1990,6 +2876,33 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"Saved value model to {args.model}")
         print("Loss history: " + ", ".join(f"{loss:.4f}" for loss in history))
         return 0
+    if args.command == "train-policy":
+        try:
+            history = train_policy_value_model(
+                dataset_path=args.data or ["neural_data/selfplay.jsonl"],
+                model_path=args.model,
+                hidden_size=args.hidden_size,
+                action_size=args.action_size,
+                epochs=args.epochs,
+                learning_rate=args.learning_rate,
+                seed=args.seed,
+                limit=args.limit,
+                per_dataset_limit=args.per_data_limit,
+                progress=not args.quiet,
+                batch_size=args.batch_size,
+                device=args.device,
+                validation_fraction=args.validation_fraction,
+                early_stop_patience=args.early_stop_patience,
+                early_stop_min_delta=args.early_stop_min_delta,
+                value_loss_weight=args.value_loss_weight,
+                policy_loss_weight=args.policy_loss_weight,
+                map_name=args.map,
+            )
+        except RuntimeError as exc:
+            raise SystemExit(str(exc)) from exc
+        print(f"Saved policy/value model to {args.model}")
+        print("Loss history: " + ", ".join(f"{loss:.4f}" for loss in history))
+        return 0
     if args.command == "evaluate":
         weights = load_weights(args.weights) if args.weights else None
         result = evaluate_value_bot(model_path=args.model, games=args.games, seed=args.seed, weights=weights)
@@ -2011,8 +2924,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             heuristic_search_depth=args.heuristic_search_depth,
             neural_scale=args.neural_scale,
             heuristic_scale=args.heuristic_scale,
+            policy_scale=args.policy_scale,
             neural_search_width=args.neural_search_width,
             neural_search_depth=args.neural_search_depth,
+            mcts_simulations=args.mcts_simulations,
+            mcts_exploration=args.mcts_exploration,
+            mcts_max_children=args.mcts_max_children,
+            mcts_depth=args.mcts_depth,
             progress=not args.quiet,
         )
         payload = json.dumps(result, indent=2, sort_keys=True)
@@ -2041,8 +2959,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             heuristic_search_depth=args.heuristic_search_depth,
             neural_scale=args.neural_scale,
             heuristic_scale=args.heuristic_scale,
+            policy_scale=args.policy_scale,
             neural_search_width=args.neural_search_width,
             neural_search_depth=args.neural_search_depth,
+            mcts_simulations=args.mcts_simulations,
+            mcts_exploration=args.mcts_exploration,
+            mcts_max_children=args.mcts_max_children,
+            mcts_depth=args.mcts_depth,
             min_head_to_head_score=args.min_head_to_head_score,
             min_overall_score=args.min_overall_score,
             min_head_to_head_lower_bound=args.min_head_to_head_lower_bound,
@@ -2064,6 +2987,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             json.dumps(
                 {
                     "state_vector_size": encoded_state_size(state),
+                    "action_space_size": action_space_for_state(state).size,
                     "legal_actions": len(state.legal_actions()),
                     "sample_legal_action_indices": [
                         encode_action_index(state, action) for action in state.legal_actions()[:10]

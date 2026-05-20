@@ -98,10 +98,15 @@ def _load_checkpoint_metadata(checkpoints_dir: Path, root: Path) -> dict[str, di
             continue
         model_path = _relative_to_root(path, root)
         metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
+        compact_metadata = _compact_metadata(metadata)
+        kind = payload.get("kind", "value")
+        compact_metadata["model_kind"] = kind if isinstance(kind, str) else "value"
+        if "action_size" in payload:
+            compact_metadata["action_size"] = int(payload["action_size"])
         metadata_by_model[model_path] = {
             "hidden_size": int(payload["hidden_size"]),
             "input_size": int(payload["input_size"]),
-            "metadata": _compact_metadata(metadata),
+            "metadata": compact_metadata,
         }
     return metadata_by_model
 
@@ -112,6 +117,7 @@ def _compact_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
         "batch_size",
         "best_epoch",
         "best_validation_loss",
+        "best_validation_policy_accuracy",
         "completed_epochs",
         "dataset",
         "datasets",
@@ -123,7 +129,9 @@ def _compact_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
         "per_dataset_limit",
         "target",
         "training_examples",
+        "policy_loss_weight",
         "validation_examples",
+        "value_loss_weight",
     }
     compact = {key: value for key, value in metadata.items() if key in useful_keys}
     if isinstance(compact.get("dataset"), list):
