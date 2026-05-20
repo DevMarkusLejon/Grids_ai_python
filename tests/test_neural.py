@@ -156,6 +156,29 @@ class NeuralTests(unittest.TestCase):
         self.assertEqual(result["neural_search_width"], 2)
         self.assertEqual(result["neural_search_depth"], 2)
 
+    def test_value_gauntlet_can_run_neural_only_head_to_head(self) -> None:
+        model = ValueNetwork(input_size=925, hidden_size=4, seed=6)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            model_path = os.path.join(temp_dir, "model.json")
+            opponent_path = os.path.join(temp_dir, "opponent.json")
+            model.save(model_path)
+            model.save(opponent_path)
+
+            result = run_value_gauntlet(
+                model_path=model_path,
+                games=1,
+                seed=10,
+                neural_opponent_models=[opponent_path],
+                auto_neural_opponents=False,
+                include_baseline_opponents=False,
+                heuristic_search_width=1,
+                heuristic_search_depth=1,
+            )
+
+        self.assertEqual(result["total_games"], 2)
+        self.assertEqual(len(result["opponents"]), 1)
+        self.assertEqual(result["opponents"][0]["kind"], "neural")
+
 
 if __name__ == "__main__":
     unittest.main()

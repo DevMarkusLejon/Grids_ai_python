@@ -1,0 +1,109 @@
+{
+  "elapsed_seconds": 968.2942057000473,
+  "games_per_side": 1,
+  "heuristic_scale": 1.0,
+  "hidden_size": 192,
+  "input_size": 925,
+  "map": "plains",
+  "model": "checkpoints/value_model_torch_192_shaped_800_deterministic_300hp_20260505-0703.json",
+  "neural_scale": 120.0,
+  "neural_search_depth": 4,
+  "neural_search_width": 3,
+  "opponents": [
+    {
+      "average_half_turns": 14.5,
+      "blue_wins": 1,
+      "draws": 0,
+      "games_per_side": 1,
+      "kind": "random",
+      "losses": 0,
+      "opponent": "random",
+      "red_wins": 1,
+      "score_rate": 1.0,
+      "total_games": 2,
+      "wins": 2
+    },
+    {
+      "average_half_turns": 30.5,
+      "blue_wins": 1,
+      "draws": 0,
+      "games_per_side": 1,
+      "kind": "heuristic",
+      "losses": 0,
+      "metadata": {
+        "weights": "default"
+      },
+      "opponent": "default_heuristic_w3_d6",
+      "red_wins": 1,
+      "score_rate": 1.0,
+      "total_games": 2,
+      "wins": 2
+    },
+    {
+      "average_half_turns": 46.5,
+      "blue_wins": 1,
+      "draws": 0,
+      "games_per_side": 1,
+      "kind": "heuristic",
+      "losses": 0,
+      "metadata": {
+        "weights": "trained_weights.json"
+      },
+      "opponent": "trained_heuristic:trained_weights.json",
+      "red_wins": 1,
+      "score_rate": 1.0,
+      "total_games": 2,
+      "wins": 2
+    },
+    {
+      "average_half_turns": 55.0,
+      "blue_wins": 0,
+      "draws": 0,
+      "games_per_side": 1,
+      "kind": "neural",
+      "losses": 1,
+      "metadata": {
+        "heuristic_scale": 1.0,
+        "hidden_size": 128,
+        "model": "checkpoints/value_model_torch_128_shaped_1000_300hp.json",
+        "neural_scale": 120.0,
+        "search_depth": 4,
+        "search_width": 3
+      },
+      "opponent": "neural:value_model_torch_128_shaped_1000_300hp.json",
+      "red_wins": 1,
+      "score_rate": 0.5,
+      "total_games": 2,
+      "wins": 1
+    },
+    {
+      "average_half_turns": 52.5,
+      "blue_wins": 1,
+      "draws": 0,
+      "games_per_side": 1,
+      "kind": "neural",
+      "losses": 0,
+      "metadata": {
+        "heuristic_scale": 1.0,
+        "hidden_size": 128,
+        "model": "checkpoints/value_model_torch_128_shaped_1200_clean_300hp_20260505-002857.json",
+        "neural_scale": 120.0,
+        "search_depth": 4,
+        "search_width": 3
+      },
+      "opponent": "neural:value_model_torch_128_shaped_1200_clean_300hp_20260505-002857.json",
+      "red_wins": 1,
+      "score_rate": 1.0,
+      "total_games": 2,
+      "wins": 2
+    }
+  ],
+  "overall": {
+    "average_half_turns": 39.8,
+    "draws": 0,
+    "losses": 1,
+    "score_rate": 0.9,
+    "wins": 9
+  },
+  "total_games": 10
+}

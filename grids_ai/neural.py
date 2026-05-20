@@ -1250,6 +1250,7 @@ def build_gauntlet_opponents(
     fallback_weights: dict[str, float],
     heuristic_weights_path: str | None = None,
     neural_model_paths: Sequence[str] = (),
+    include_baseline_opponents: bool = True,
     heuristic_search_width: int = 3,
     heuristic_search_depth: int | None = 6,
     neural_scale: float = 120.0,
@@ -1257,26 +1258,31 @@ def build_gauntlet_opponents(
     neural_search_width: int = 1,
     neural_search_depth: int | None = 1,
 ) -> list[GauntletOpponent]:
-    opponents: list[GauntletOpponent] = [
-        GauntletOpponent(
-            name="random",
-            kind="random",
-            make_bot=lambda seed: RandomBot(seed=seed),
-        ),
-        GauntletOpponent(
-            name=f"default_heuristic_w{heuristic_search_width}_d{heuristic_search_depth or 'full'}",
-            kind="heuristic",
-            make_bot=lambda seed: HeuristicBot(
-                dict(DEFAULT_WEIGHTS),
-                seed=seed,
-                search_width=heuristic_search_width,
-                search_depth=heuristic_search_depth,
-            ),
-            metadata={"weights": "default"},
-        ),
-    ]
+    opponents: list[GauntletOpponent] = []
 
-    if heuristic_weights_path and os.path.exists(heuristic_weights_path):
+    if include_baseline_opponents:
+        opponents.extend(
+            [
+                GauntletOpponent(
+                    name="random",
+                    kind="random",
+                    make_bot=lambda seed: RandomBot(seed=seed),
+                ),
+                GauntletOpponent(
+                    name=f"default_heuristic_w{heuristic_search_width}_d{heuristic_search_depth or 'full'}",
+                    kind="heuristic",
+                    make_bot=lambda seed: HeuristicBot(
+                        dict(DEFAULT_WEIGHTS),
+                        seed=seed,
+                        search_width=heuristic_search_width,
+                        search_depth=heuristic_search_depth,
+                    ),
+                    metadata={"weights": "default"},
+                ),
+            ]
+        )
+
+    if include_baseline_opponents and heuristic_weights_path and os.path.exists(heuristic_weights_path):
         trained_weights = load_weights(heuristic_weights_path)
         opponents.append(
             GauntletOpponent(
@@ -1331,6 +1337,7 @@ def run_value_gauntlet(
     weights_path: str | None = None,
     neural_opponent_models: Sequence[str] = (),
     auto_neural_opponents: bool = True,
+    include_baseline_opponents: bool = True,
     map_name: str = "plains",
     heuristic_search_width: int = 3,
     heuristic_search_depth: int | None = 6,
@@ -1357,6 +1364,7 @@ def run_value_gauntlet(
         fallback_weights=fallback_weights,
         heuristic_weights_path=weights_path,
         neural_model_paths=opponent_model_paths,
+        include_baseline_opponents=include_baseline_opponents,
         heuristic_search_width=heuristic_search_width,
         heuristic_search_depth=heuristic_search_depth,
         neural_scale=neural_scale,
@@ -1568,6 +1576,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Additional neural checkpoint to include as an opponent. Can be passed more than once.",
     )
     gauntlet.add_argument("--no-auto-opponents", action="store_true", help="Do not auto-discover older checkpoints.")
+    gauntlet.add_argument(
+        "--only-neural-opponents",
+        action="store_true",
+        help="Skip random and heuristic baselines; useful for faster checkpoint head-to-heads.",
+    )
     gauntlet.add_argument("--output", help="Optional JSON file for gauntlet results.")
     gauntlet.add_argument("--quiet", action="store_true", help="Suppress per-opponent progress output.")
 
@@ -1641,6 +1654,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             weights_path=args.weights,
             neural_opponent_models=args.opponent_model,
             auto_neural_opponents=not args.no_auto_opponents,
+            include_baseline_opponents=not args.only_neural_opponents,
             map_name=args.map,
             heuristic_search_width=args.heuristic_search_width,
             heuristic_search_depth=args.heuristic_search_depth,
