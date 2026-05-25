@@ -329,6 +329,29 @@ class NeuralTests(unittest.TestCase):
         self.assertEqual(len(result["opponents"]), 1)
         self.assertEqual(result["opponents"][0]["kind"], "neural")
 
+    def test_value_gauntlet_can_use_parallel_workers(self) -> None:
+        model = ValueNetwork(input_size=925, hidden_size=4, seed=16)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            model_path = os.path.join(temp_dir, "model.json")
+            model.save(model_path)
+
+            result = run_value_gauntlet(
+                model_path=model_path,
+                games=1,
+                seed=16,
+                auto_neural_opponents=False,
+                include_baseline_opponents=True,
+                heuristic_search_width=1,
+                heuristic_search_depth=1,
+                neural_search_width=1,
+                neural_search_depth=1,
+                workers=2,
+            )
+
+        self.assertEqual(result["workers"], 2)
+        self.assertEqual(result["total_games"], 4)
+        self.assertEqual(len(result["opponents"]), 2)
+
     def test_champion_gauntlet_reports_promotion_decision(self) -> None:
         candidate = ValueNetwork(input_size=925, hidden_size=4, seed=7)
         champion = ValueNetwork(input_size=925, hidden_size=4, seed=8)

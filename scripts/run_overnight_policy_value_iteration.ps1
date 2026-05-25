@@ -6,6 +6,7 @@ param(
   [int]$BatchSize = 512,
   [int]$PerDataLimit = 80000,
   [int]$GateGames = 2,
+  [int]$EvalWorkers = 4,
   [double]$PolicyScale = 18.0
 )
 
@@ -29,6 +30,7 @@ $Data = @(
   -BatchSize $BatchSize `
   -PerDataLimit $PerDataLimit `
   -GateGames $GateGames `
+  -EvalWorkers $EvalWorkers `
   -PolicyScale $PolicyScale
 
 if ($LASTEXITCODE -ne 0) {

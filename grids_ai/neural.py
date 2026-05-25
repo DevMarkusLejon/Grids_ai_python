@@ -905,6 +905,7 @@ class ExploratoryHeuristicBot(Bot):
 
 
 BotFactory = Callable[[int], Bot]
+_GAUNTLET_MODEL_CACHE: dict[str, NeuralModel] = {}
 
 
 @dataclass(frozen=True)
@@ -913,6 +914,181 @@ class GauntletOpponent:
     kind: str
     make_bot: BotFactory
     metadata: dict[str, object] | None = None
+
+
+def _cached_gauntlet_model(path: str) -> NeuralModel:
+    model = _GAUNTLET_MODEL_CACHE.get(path)
+    if model is None:
+        model = load_neural_model(path)
+        _GAUNTLET_MODEL_CACHE[path] = model
+    return model
+
+
+def _gauntlet_opponent_spec(opponent: GauntletOpponent) -> dict[str, object]:
+    metadata = dict(opponent.metadata or {})
+    spec: dict[str, object] = {
+        "name": opponent.name,
+        "kind": opponent.kind,
+        "metadata": metadata,
+    }
+    if opponent.kind == "heuristic":
+        weights_path = metadata.get("weights")
+        if isinstance(weights_path, str) and weights_path != "default" and os.path.exists(weights_path):
+            spec["weights"] = load_weights(weights_path)
+        else:
+            spec["weights"] = dict(DEFAULT_WEIGHTS)
+    elif opponent.kind == "neural":
+        model_path = metadata.get("model")
+        if isinstance(model_path, str):
+            spec["model"] = model_path
+    return spec
+
+
+def _make_gauntlet_opponent_bot(
+    spec: dict[str, object],
+    *,
+    seed: int,
+    fallback_weights: dict[str, float],
+    heuristic_search_width: int,
+    heuristic_search_depth: int | None,
+    neural_scale: float,
+    heuristic_scale: float,
+    policy_scale: float,
+    neural_search_width: int,
+    neural_search_depth: int | None,
+    mcts_simulations: int,
+    mcts_exploration: float,
+    mcts_max_children: int,
+    mcts_depth: int,
+) -> Bot:
+    kind = spec["kind"]
+    if kind == "random":
+        return RandomBot(seed=seed)
+    if kind == "heuristic":
+        weights = spec.get("weights")
+        if not isinstance(weights, dict):
+            weights = dict(DEFAULT_WEIGHTS)
+        return HeuristicBot(
+            dict(weights),
+            seed=seed,
+            search_width=heuristic_search_width,
+            search_depth=heuristic_search_depth,
+        )
+    if kind == "neural":
+        model_path = spec.get("model")
+        if not isinstance(model_path, str):
+            raise ValueError(f"Neural opponent is missing a model path: {spec.get('name')}")
+        return make_neural_bot(
+            _cached_gauntlet_model(model_path),
+            fallback_weights=fallback_weights,
+            seed=seed,
+            neural_scale=neural_scale,
+            heuristic_scale=heuristic_scale,
+            policy_scale=policy_scale,
+            search_width=neural_search_width,
+            search_depth=neural_search_depth,
+            mcts_simulations=mcts_simulations,
+            mcts_exploration=mcts_exploration,
+            mcts_max_children=mcts_max_children,
+            mcts_depth=mcts_depth,
+        )
+    raise ValueError(f"Unknown gauntlet opponent kind: {kind}")
+
+
+def _play_gauntlet_pair_task(task: dict[str, object]) -> dict[str, object]:
+    model_path = str(task["model_path"])
+    game_seed = int(task["game_seed"])
+    map_name = str(task["map_name"])
+    fallback_weights = dict(task["fallback_weights"])  # type: ignore[arg-type]
+    spec = dict(task["opponent_spec"])  # type: ignore[arg-type]
+    neural_scale = float(task["neural_scale"])
+    heuristic_scale = float(task["heuristic_scale"])
+    policy_scale = float(task["policy_scale"])
+    neural_search_width = int(task["neural_search_width"])
+    neural_search_depth = task["neural_search_depth"]
+    neural_search_depth = int(neural_search_depth) if neural_search_depth is not None else None
+    heuristic_search_width = int(task["heuristic_search_width"])
+    heuristic_search_depth = task["heuristic_search_depth"]
+    heuristic_search_depth = int(heuristic_search_depth) if heuristic_search_depth is not None else None
+    mcts_simulations = int(task["mcts_simulations"])
+    mcts_exploration = float(task["mcts_exploration"])
+    mcts_max_children = int(task["mcts_max_children"])
+    mcts_depth = int(task["mcts_depth"])
+    model = _cached_gauntlet_model(model_path)
+
+    subject_blue = make_neural_bot(
+        model,
+        fallback_weights=fallback_weights,
+        seed=game_seed + 1,
+        neural_scale=neural_scale,
+        heuristic_scale=heuristic_scale,
+        policy_scale=policy_scale,
+        search_width=neural_search_width,
+        search_depth=neural_search_depth,
+        mcts_simulations=mcts_simulations,
+        mcts_exploration=mcts_exploration,
+        mcts_max_children=mcts_max_children,
+        mcts_depth=mcts_depth,
+    )
+    opponent_red = _make_gauntlet_opponent_bot(
+        spec,
+        seed=game_seed + 2,
+        fallback_weights=fallback_weights,
+        heuristic_search_width=heuristic_search_width,
+        heuristic_search_depth=heuristic_search_depth,
+        neural_scale=neural_scale,
+        heuristic_scale=heuristic_scale,
+        policy_scale=policy_scale,
+        neural_search_width=neural_search_width,
+        neural_search_depth=neural_search_depth,
+        mcts_simulations=mcts_simulations,
+        mcts_exploration=mcts_exploration,
+        mcts_max_children=mcts_max_children,
+        mcts_depth=mcts_depth,
+    )
+    blue_state = play_match(subject_blue, opponent_red, seed=game_seed, map_name=map_name)
+    blue_result = side_result(blue_state, Side.BLUE)
+
+    opponent_blue = _make_gauntlet_opponent_bot(
+        spec,
+        seed=game_seed + 1002,
+        fallback_weights=fallback_weights,
+        heuristic_search_width=heuristic_search_width,
+        heuristic_search_depth=heuristic_search_depth,
+        neural_scale=neural_scale,
+        heuristic_scale=heuristic_scale,
+        policy_scale=policy_scale,
+        neural_search_width=neural_search_width,
+        neural_search_depth=neural_search_depth,
+        mcts_simulations=mcts_simulations,
+        mcts_exploration=mcts_exploration,
+        mcts_max_children=mcts_max_children,
+        mcts_depth=mcts_depth,
+    )
+    subject_red = make_neural_bot(
+        model,
+        fallback_weights=fallback_weights,
+        seed=game_seed + 1001,
+        neural_scale=neural_scale,
+        heuristic_scale=heuristic_scale,
+        policy_scale=policy_scale,
+        search_width=neural_search_width,
+        search_depth=neural_search_depth,
+        mcts_simulations=mcts_simulations,
+        mcts_exploration=mcts_exploration,
+        mcts_max_children=mcts_max_children,
+        mcts_depth=mcts_depth,
+    )
+    red_state = play_match(opponent_blue, subject_red, seed=game_seed, map_name=map_name)
+    red_result = side_result(red_state, Side.RED)
+    return {
+        "wins": (1 if blue_result == 1 else 0) + (1 if red_result == 1 else 0),
+        "draws": (1 if blue_result == 0 else 0) + (1 if red_result == 0 else 0),
+        "losses": (1 if blue_result == -1 else 0) + (1 if red_result == -1 else 0),
+        "blue_wins": 1 if blue_result == 1 else 0,
+        "red_wins": 1 if red_result == 1 else 0,
+        "half_turns": [blue_state.half_turns_played, red_state.half_turns_played],
+    }
 
 
 def winner_value(winner: Side | None, side: Side) -> float:
@@ -2354,10 +2530,13 @@ def run_value_gauntlet(
     mcts_exploration: float = 1.25,
     mcts_max_children: int = 24,
     mcts_depth: int = 7,
+    workers: int = 1,
     progress: bool = False,
 ) -> dict[str, object]:
     if games < 1:
         raise ValueError("--games must be at least 1.")
+    if workers < 1:
+        raise ValueError("--workers must be at least 1.")
     model = load_neural_model(model_path)
     fallback_weights = dict(DEFAULT_WEIGHTS)
     if weights:
@@ -2401,53 +2580,87 @@ def run_value_gauntlet(
         blue_wins = 0
         red_wins = 0
         half_turns: list[int] = []
-        for game_index in range(games):
-            game_seed = seed + opponent_index * 10000 + game_index
-            subject_blue = make_neural_bot(
-                model,
-                fallback_weights=fallback_weights,
-                seed=game_seed + 1,
-                neural_scale=neural_scale,
-                heuristic_scale=heuristic_scale,
-                policy_scale=policy_scale,
-                search_width=neural_search_width,
-                search_depth=neural_search_depth,
-                mcts_simulations=mcts_simulations,
-                mcts_exploration=mcts_exploration,
-                mcts_max_children=mcts_max_children,
-                mcts_depth=mcts_depth,
-            )
-            opponent_red = opponent.make_bot(game_seed + 2)
-            blue_state = play_match(subject_blue, opponent_red, seed=game_seed, map_name=map_name)
-            result = side_result(blue_state, Side.BLUE)
-            wins += 1 if result == 1 else 0
-            draws += 1 if result == 0 else 0
-            losses += 1 if result == -1 else 0
-            blue_wins += 1 if result == 1 else 0
-            half_turns.append(blue_state.half_turns_played)
+        if workers == 1:
+            for game_index in range(games):
+                game_seed = seed + opponent_index * 10000 + game_index
+                subject_blue = make_neural_bot(
+                    model,
+                    fallback_weights=fallback_weights,
+                    seed=game_seed + 1,
+                    neural_scale=neural_scale,
+                    heuristic_scale=heuristic_scale,
+                    policy_scale=policy_scale,
+                    search_width=neural_search_width,
+                    search_depth=neural_search_depth,
+                    mcts_simulations=mcts_simulations,
+                    mcts_exploration=mcts_exploration,
+                    mcts_max_children=mcts_max_children,
+                    mcts_depth=mcts_depth,
+                )
+                opponent_red = opponent.make_bot(game_seed + 2)
+                blue_state = play_match(subject_blue, opponent_red, seed=game_seed, map_name=map_name)
+                result = side_result(blue_state, Side.BLUE)
+                wins += 1 if result == 1 else 0
+                draws += 1 if result == 0 else 0
+                losses += 1 if result == -1 else 0
+                blue_wins += 1 if result == 1 else 0
+                half_turns.append(blue_state.half_turns_played)
 
-            opponent_blue = opponent.make_bot(game_seed + 1002)
-            subject_red = make_neural_bot(
-                model,
-                fallback_weights=fallback_weights,
-                seed=game_seed + 1001,
-                neural_scale=neural_scale,
-                heuristic_scale=heuristic_scale,
-                policy_scale=policy_scale,
-                search_width=neural_search_width,
-                search_depth=neural_search_depth,
-                mcts_simulations=mcts_simulations,
-                mcts_exploration=mcts_exploration,
-                mcts_max_children=mcts_max_children,
-                mcts_depth=mcts_depth,
-            )
-            red_state = play_match(opponent_blue, subject_red, seed=game_seed, map_name=map_name)
-            result = side_result(red_state, Side.RED)
-            wins += 1 if result == 1 else 0
-            draws += 1 if result == 0 else 0
-            losses += 1 if result == -1 else 0
-            red_wins += 1 if result == 1 else 0
-            half_turns.append(red_state.half_turns_played)
+                opponent_blue = opponent.make_bot(game_seed + 1002)
+                subject_red = make_neural_bot(
+                    model,
+                    fallback_weights=fallback_weights,
+                    seed=game_seed + 1001,
+                    neural_scale=neural_scale,
+                    heuristic_scale=heuristic_scale,
+                    policy_scale=policy_scale,
+                    search_width=neural_search_width,
+                    search_depth=neural_search_depth,
+                    mcts_simulations=mcts_simulations,
+                    mcts_exploration=mcts_exploration,
+                    mcts_max_children=mcts_max_children,
+                    mcts_depth=mcts_depth,
+                )
+                red_state = play_match(opponent_blue, subject_red, seed=game_seed, map_name=map_name)
+                result = side_result(red_state, Side.RED)
+                wins += 1 if result == 1 else 0
+                draws += 1 if result == 0 else 0
+                losses += 1 if result == -1 else 0
+                red_wins += 1 if result == 1 else 0
+                half_turns.append(red_state.half_turns_played)
+        else:
+            opponent_spec = _gauntlet_opponent_spec(opponent)
+            tasks = [
+                {
+                    "model_path": model_path,
+                    "opponent_spec": opponent_spec,
+                    "game_seed": seed + opponent_index * 10000 + game_index,
+                    "map_name": map_name,
+                    "fallback_weights": fallback_weights,
+                    "heuristic_search_width": heuristic_search_width,
+                    "heuristic_search_depth": heuristic_search_depth,
+                    "neural_scale": neural_scale,
+                    "heuristic_scale": heuristic_scale,
+                    "policy_scale": policy_scale,
+                    "neural_search_width": neural_search_width,
+                    "neural_search_depth": neural_search_depth,
+                    "mcts_simulations": mcts_simulations,
+                    "mcts_exploration": mcts_exploration,
+                    "mcts_max_children": mcts_max_children,
+                    "mcts_depth": mcts_depth,
+                }
+                for game_index in range(games)
+            ]
+            with ProcessPoolExecutor(max_workers=min(workers, games)) as executor:
+                futures = [executor.submit(_play_gauntlet_pair_task, task) for task in tasks]
+                for future in as_completed(futures):
+                    paired_result = future.result()
+                    wins += int(paired_result["wins"])
+                    draws += int(paired_result["draws"])
+                    losses += int(paired_result["losses"])
+                    blue_wins += int(paired_result["blue_wins"])
+                    red_wins += int(paired_result["red_wins"])
+                    half_turns.extend(int(value) for value in paired_result["half_turns"])
 
         played = wins + draws + losses
         overall_wins += wins
@@ -2498,6 +2711,7 @@ def run_value_gauntlet(
         "mcts_exploration": mcts_exploration if isinstance(model, PolicyValueNetwork) else None,
         "mcts_max_children": mcts_max_children if isinstance(model, PolicyValueNetwork) else None,
         "mcts_depth": mcts_depth if isinstance(model, PolicyValueNetwork) else None,
+        "workers": workers,
         "overall": {
             "wins": overall_wins,
             "draws": overall_draws,
@@ -2544,6 +2758,7 @@ def run_champion_gauntlet(
     min_head_to_head_score: float = 0.55,
     min_overall_score: float = 0.60,
     min_head_to_head_lower_bound: float = 0.50,
+    workers: int = 1,
     progress: bool = False,
 ) -> dict[str, object]:
     if os.path.abspath(candidate_model_path) == os.path.abspath(champion_model_path):
@@ -2575,6 +2790,7 @@ def run_champion_gauntlet(
         mcts_exploration=mcts_exploration,
         mcts_max_children=mcts_max_children,
         mcts_depth=mcts_depth,
+        workers=workers,
         progress=progress,
     )
 
@@ -2757,6 +2973,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     gauntlet.add_argument("--mcts-exploration", type=float, default=1.25)
     gauntlet.add_argument("--mcts-max-children", type=int, default=24)
     gauntlet.add_argument("--mcts-depth", type=int, default=7)
+    gauntlet.add_argument("--workers", type=int, default=1, help="Parallel paired-game workers for gauntlet evaluation.")
     gauntlet.add_argument(
         "--opponent-model",
         action="append",
@@ -2797,6 +3014,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     champion.add_argument("--mcts-exploration", type=float, default=1.25)
     champion.add_argument("--mcts-max-children", type=int, default=24)
     champion.add_argument("--mcts-depth", type=int, default=7)
+    champion.add_argument("--workers", type=int, default=1, help="Parallel paired-game workers for champion evaluation.")
     champion.add_argument(
         "--opponent-model",
         action="append",
@@ -2931,6 +3149,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             mcts_exploration=args.mcts_exploration,
             mcts_max_children=args.mcts_max_children,
             mcts_depth=args.mcts_depth,
+            workers=args.workers,
             progress=not args.quiet,
         )
         payload = json.dumps(result, indent=2, sort_keys=True)
@@ -2969,6 +3188,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             min_head_to_head_score=args.min_head_to_head_score,
             min_overall_score=args.min_overall_score,
             min_head_to_head_lower_bound=args.min_head_to_head_lower_bound,
+            workers=args.workers,
             progress=not args.quiet,
         )
         payload = json.dumps(result, indent=2, sort_keys=True)

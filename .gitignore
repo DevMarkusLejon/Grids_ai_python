@@ -5,6 +5,7 @@ __pycache__/
 .ruff_cache/
 *.egg-info/
 .env
+.venv-gpu/
 local_notify_config.ps1
 
 neural_data/

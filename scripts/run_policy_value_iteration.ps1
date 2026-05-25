@@ -10,6 +10,7 @@ param(
   [int]$BatchSize = 512,
   [int]$PerDataLimit = 8000,
   [int]$GateGames = 2,
+  [int]$EvalWorkers = 1,
   [double]$PolicyScale = 18.0,
   [switch]$UseMcts,
   [int]$MctsSimulations = 24,
@@ -68,6 +69,7 @@ try {
     "--neural-search-width", $SearchWidth,
     "--neural-search-depth", $SearchDepth,
     "--policy-scale", "$PolicyScale",
+    "--workers", "$EvalWorkers",
     "--output", $ReportPath
   )
   if ($UseMcts) {

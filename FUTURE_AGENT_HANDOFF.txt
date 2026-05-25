@@ -1,0 +1,111 @@
+Grids AI future-agent handoff
+Generated: 2026-05-25
+
+Repository
+- Path on this machine: C:\Users\marku\Documents\GitHub\Grids_ai_python
+- Branch at handoff time: main
+- Remote: https://github.com/DevMarkusLejon/Grids_ai_python.git
+
+Project goal
+- Build and study a strong AI for the Grids game, eventually aiming for superhuman play.
+- Current direction is policy/value neural networks trained from self-play / teacher data, evaluated through gauntlets against random, heuristic, trained heuristic, value-net champion, and previous policy/value models.
+- The browser portfolio / AI Lab should expose current model history and allow the user to inspect progress and play/watch AI games.
+
+Most recent important work
+- Added parallel gauntlet evaluation support:
+  - grids_ai/neural.py now accepts --workers for gauntlet and champion commands.
+  - Paired games can run via ProcessPoolExecutor.
+  - scripts/run_policy_value_iteration.ps1 accepts -EvalWorkers.
+  - scripts/run_overnight_policy_value_iteration.ps1 defaults EvalWorkers to 4.
+  - tests/test_neural.py has coverage for parallel gauntlet workers.
+- Added .venv-gpu/ to .gitignore.
+- Added long-run helper scripts:
+  - scripts/run_long_policy_value_data_collection.ps1
+  - scripts/run_long_gpu_policy_value_training.ps1
+- Refreshed web/assets/model-registry.json after evaluations.
+
+Recent training / evaluation results
+- Long CPU data collection finished on 2026-05-21:
+  - Run dir: neural_data\long_policy_value_collection_20260521-084951
+  - Log: logs\long_policy_value_collection_20260521-084951.log
+  - Manifest: neural_data\long_policy_value_collection_20260521-084951\manifest.json
+  - Produced 5 batch files, 47,785 examples total.
+  - neural_data and logs are ignored by Git, so these are local-only unless exported separately.
+- Large 192-hidden policy/value confirmation:
+  - Candidate: checkpoints/policy_value_torch_192_blend_20260521-073435.json
+  - Report: reports/champion_gate_policy_value_192_overnight_confirm_20260521-075011.json
+  - Result: 115W-29L overall, 79.9% score rate.
+  - Vs current champion: 16W-8L, 66.7%, but Wilson lower bound 46.7%, below the 50% auto-promote threshold. Not promoted.
+- Long 8-hour GPU run finished 2026-05-22 at 04:05:
+  - Manifest: reports\long_gpu_policy_value_training_20260521-200327.manifest.json
+  - Log: logs\long_gpu_policy_value_training_20260521-200327.log
+  - GPU: NVIDIA GeForce RTX 2060
+  - Python env: .venv-gpu with torch 2.5.1+cu121 and numpy.
+  - 37 model/evaluation cycles completed.
+  - Best family was hidden_size=384:
+    - 38W-10L overall, 79.2% score rate.
+    - 6W-2L vs current value champion.
+    - 5W-3L vs 192 policy/value model.
+    - 7W-1L vs default heuristic.
+    - 7W-1L vs trained heuristic.
+    - Not promoted because the head-to-head Wilson lower bound was too low on only 8 head-to-head games.
+  - Larger models were not better in this setup:
+    - 384: 79.2%
+    - 512: 64.6%
+    - 768: 68.8%
+    - 1024: 70.8%
+
+Large local-only artifacts
+- Checkpoints matching checkpoints/policy_value*.json are ignored by Git and many are too large for normal GitHub pushes.
+- Best GPU checkpoint from the long run was reported as:
+  - checkpoints/policy_value_gpu_384_blend_20260522-000734.json
+- Another equivalent final 384 run exists:
+  - checkpoints/policy_value_gpu_384_blend_20260522-035434.json
+- These files are about 97 MB each; 512/768/1024 checkpoints are larger and exceed normal GitHub limits.
+- If a future agent needs these on another machine, use Git LFS, a GitHub release asset, or regenerate locally from the committed scripts and local data.
+
+Current strongest / champion context
+- The official current champion still appears to be:
+  - checkpoints/value_model_torch_128_shaped_1000_300hp.json
+- The best recent policy/value candidates are promising but have not passed the conservative auto-promotion gate.
+- The next evidence step should be a larger confirmation gate for one 384 policy/value GPU candidate, not another blind size increase.
+
+Recommended next steps
+1. Run a larger confirmation gate for the best 384 policy/value model, with more games than the overnight quick gauntlet.
+   Suggested shape:
+   - Compare against current value champion, 192 policy/value, 128 policy/value, default heuristic, trained heuristic.
+   - Use --workers 4 or higher if the machine is idle.
+   - Increase games enough for the Wilson lower bound to be meaningful.
+2. If 384 confirms strength, decide whether to promote it as champion and export it for browser use.
+3. Improve evaluation speed next. Training on GPU is now fast; evaluation is the bottleneck because game simulation/search is CPU-bound.
+   Candidate improvements:
+   - More robust parallel scheduling.
+   - Batched neural inference during search/evaluation.
+   - Fewer duplicate repeated gauntlets when training is deterministic.
+4. Add a durable model artifact plan.
+   - Git currently stores reports and registry, not the huge neural checkpoints.
+   - For laptop/browser portability, add Git LFS or a release/download workflow for selected champion models.
+5. Improve the AI Lab dashboard:
+   - Clearly separate confirmed champions, candidates, local-only artifacts, and browser-playable exported models.
+   - Show confidence intervals, not only win rates.
+6. Continue improving data quality:
+   - Generate more diverse self-play positions.
+   - Reduce teacher bias by mixing heuristic, value champion, and policy/value candidates.
+   - Consider training target balance and deduplication.
+
+Useful commands
+- Run focused tests:
+  python -m unittest tests.test_neural.NeuralTests.test_value_gauntlet_can_use_parallel_workers tests.test_neural.NeuralTests.test_value_gauntlet_runs_paired_games tests.test_neural.NeuralTests.test_champion_gauntlet_reports_promotion_decision
+- Syntax check:
+  python -m py_compile grids_ai\neural.py
+- Refresh model registry:
+  powershell -ExecutionPolicy Bypass -File scripts\update_model_registry.ps1
+- Example champion/gauntlet style command:
+  python -m grids_ai.neural champion --candidate checkpoints/policy_value_gpu_384_blend_20260522-000734.json --champion checkpoints/value_model_torch_128_shaped_1000_300hp.json --games 24 --workers 4 --weights trained_weights.json --neural-search-width 3 --neural-search-depth 4 --policy-scale 18 --opponent-model checkpoints/policy_value_torch_192_blend_20260521-073435.json --opponent-model checkpoints/policy_value_torch_128_blend_20260520-231637.json --output reports/champion_gate_policy_value_gpu_384_confirm.json
+
+Important cautions
+- Do not delete neural_data, checkpoints, reports, or logs unless the user explicitly asks. Some are local-only and not recoverable from Git.
+- Do not spend money or create cloud resources unless the user explicitly authorizes it.
+- Do not push huge checkpoint files with normal Git. Use Git LFS/release assets if the user wants model files on another machine.
+- Phone notifications are configured locally through scripts/notify_important.ps1 and local_notify_config.ps1, but local_notify_config.ps1 is ignored.
+- Preserve user changes. Check git status before editing or committing.
