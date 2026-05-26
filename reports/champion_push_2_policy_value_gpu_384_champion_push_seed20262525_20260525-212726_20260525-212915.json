@@ -1,0 +1,99 @@
+{
+  "action_size": 10783,
+  "champion_decision": {
+    "candidate_model": "checkpoints/policy_value_gpu_384_champion_push_seed20262525_20260525-212726.json",
+    "champion_model": "checkpoints/value_model_torch_128_shaped_1000_300hp.json",
+    "head_to_head_games": 128,
+    "head_to_head_lower_bound": 0.5865623991215974,
+    "head_to_head_score_rate": 0.671875,
+    "overall_score_rate": 0.47265625,
+    "promote": false,
+    "reason": "candidate did not clear promotion thresholds",
+    "thresholds": {
+      "min_head_to_head_lower_bound": 0.5,
+      "min_head_to_head_score": 0.55,
+      "min_overall_score": 0.6
+    }
+  },
+  "elapsed_seconds": 2819.6837116000006,
+  "games_per_side": 64,
+  "heuristic_scale": 1.0,
+  "hidden_size": 384,
+  "input_size": 925,
+  "map": "plains",
+  "mcts_depth": 7,
+  "mcts_exploration": 1.25,
+  "mcts_max_children": 24,
+  "mcts_simulations": 0,
+  "model": "checkpoints/policy_value_gpu_384_champion_push_seed20262525_20260525-212726.json",
+  "model_kind": "policy_value",
+  "neural_scale": 120.0,
+  "neural_search_depth": 4,
+  "neural_search_width": 3,
+  "opponents": [
+    {
+      "average_half_turns": 48.453125,
+      "blue_wins": 41,
+      "draws": 0,
+      "games_per_side": 64,
+      "kind": "neural",
+      "losses": 42,
+      "metadata": {
+        "action_size": null,
+        "heuristic_scale": 1.0,
+        "hidden_size": 128,
+        "mcts_depth": null,
+        "mcts_max_children": null,
+        "mcts_simulations": 0,
+        "model": "checkpoints/value_model_torch_128_shaped_1000_300hp.json",
+        "model_kind": "value",
+        "neural_scale": 120.0,
+        "policy_scale": null,
+        "search_depth": 4,
+        "search_width": 3
+      },
+      "opponent": "neural:value_model_torch_128_shaped_1000_300hp.json",
+      "red_wins": 45,
+      "score_rate": 0.671875,
+      "total_games": 128,
+      "wins": 86
+    },
+    {
+      "average_half_turns": 53.3203125,
+      "blue_wins": 16,
+      "draws": 0,
+      "games_per_side": 64,
+      "kind": "neural",
+      "losses": 93,
+      "metadata": {
+        "action_size": 10783,
+        "heuristic_scale": 1.0,
+        "hidden_size": 192,
+        "mcts_depth": 7,
+        "mcts_max_children": 24,
+        "mcts_simulations": 0,
+        "model": "checkpoints/policy_value_torch_192_blend_20260521-073435.json",
+        "model_kind": "policy_value",
+        "neural_scale": 120.0,
+        "policy_scale": 18.0,
+        "search_depth": 4,
+        "search_width": 3
+      },
+      "opponent": "neural:policy_value_torch_192_blend_20260521-073435.json",
+      "red_wins": 19,
+      "score_rate": 0.2734375,
+      "total_games": 128,
+      "wins": 35
+    }
+  ],
+  "overall": {
+    "average_half_turns": 50.88671875,
+    "draws": 0,
+    "losses": 135,
+    "score_rate": 0.47265625,
+    "wins": 121
+  },
+  "policy_scale": 18.0,
+  "total_games": 256,
+  "workers": 6
+}

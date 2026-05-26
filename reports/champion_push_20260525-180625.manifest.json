@@ -1,0 +1,23 @@
+﻿{
+    "started_at":  "2026-05-25T18:06:25.7127996+02:00",
+    "finished_at":  "2026-05-25T19:26:19.2401123+02:00",
+    "elapsed_hours":  1.332,
+    "champion_before":  "checkpoints/value_model_torch_128_shaped_1000_300hp.json",
+    "champion_after":  "checkpoints/value_model_torch_128_shaped_1000_300hp.json",
+    "attempts":  [
+                     {
+                         "attempt":  1,
+                         "candidate":  "checkpoints/policy_value_gpu_384_blend_20260522-000734.json",
+                         "report":  "reports/champion_push_1_policy_value_gpu_384_blend_20260522-000734_20260525-180625.json",
+                         "seed":  20260525,
+                         "overall_score":  0.7057291666666666,
+                         "wins":  271,
+                         "losses":  113,
+                         "head_to_head_score":  0.59375,
+                         "head_to_head_games":  64,
+                         "head_to_head_lower_bound":  0.4714498650454971,
+                         "promote":  false,
+                         "finished_at":  "2026-05-25T19:24:16.7520783+02:00"
+                     }
+                 ]
+}
