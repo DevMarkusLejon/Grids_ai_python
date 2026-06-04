@@ -1,1 +1,1 @@
-checkpoints/value_model_torch_128_shaped_1000_300hp.json
+checkpoints/policy_value_torch_192_blend_20260521-073435.json

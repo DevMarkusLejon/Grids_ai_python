@@ -1,0 +1,72 @@
+{
+  "action_size": 10783,
+  "champion_decision": {
+    "candidate_model": "checkpoints/policy_value_gpu_384_champion_push_seed20264525_20260525-231510.json",
+    "champion_model": "checkpoints/policy_value_gpu_384_champion_push_seed20262525_20260525-212726.json",
+    "head_to_head_games": 64,
+    "head_to_head_lower_bound": 0.3810188849321495,
+    "head_to_head_score_rate": 0.5,
+    "overall_score_rate": 0.5,
+    "promote": false,
+    "reason": "candidate did not clear promotion thresholds",
+    "thresholds": {
+      "min_head_to_head_lower_bound": 0.5,
+      "min_head_to_head_score": 0.55,
+      "min_overall_score": 0.6
+    }
+  },
+  "elapsed_seconds": 696.2122427000431,
+  "games_per_side": 32,
+  "heuristic_scale": 1.0,
+  "hidden_size": 384,
+  "input_size": 925,
+  "map": "plains",
+  "mcts_depth": 7,
+  "mcts_exploration": 1.25,
+  "mcts_max_children": 24,
+  "mcts_simulations": 0,
+  "model": "checkpoints/policy_value_gpu_384_champion_push_seed20264525_20260525-231510.json",
+  "model_kind": "policy_value",
+  "neural_scale": 120.0,
+  "neural_search_depth": 4,
+  "neural_search_width": 3,
+  "opponents": [
+    {
+      "average_half_turns": 47.65625,
+      "blue_wins": 15,
+      "draws": 0,
+      "games_per_side": 32,
+      "kind": "neural",
+      "losses": 32,
+      "metadata": {
+        "action_size": 10783,
+        "heuristic_scale": 1.0,
+        "hidden_size": 384,
+        "mcts_depth": 7,
+        "mcts_max_children": 24,
+        "mcts_simulations": 0,
+        "model": "checkpoints/policy_value_gpu_384_champion_push_seed20262525_20260525-212726.json",
+        "model_kind": "policy_value",
+        "neural_scale": 120.0,
+        "policy_scale": 18.0,
+        "search_depth": 4,
+        "search_width": 3
+      },
+      "opponent": "neural:policy_value_gpu_384_champion_push_seed20262525_20260525-212726.json",
+      "red_wins": 17,
+      "score_rate": 0.5,
+      "total_games": 64,
+      "wins": 32
+    }
+  ],
+  "overall": {
+    "average_half_turns": 47.65625,
+    "draws": 0,
+    "losses": 32,
+    "score_rate": 0.5,
+    "wins": 32
+  },
+  "policy_scale": 18.0,
+  "total_games": 64,
+  "workers": 6
+}

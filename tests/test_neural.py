@@ -102,6 +102,8 @@ class NeuralTests(unittest.TestCase):
             self.assertGreater(count, 0)
             examples = load_examples(data_path)
             self.assertEqual(len(examples), count)
+            self.assertTrue(all(example.legal_action_indices for example in examples))
+            self.assertTrue(all(example.action_index in example.legal_action_indices for example in examples))
 
             history = train_value_model(
                 dataset_path=data_path,
@@ -240,6 +242,51 @@ class NeuralTests(unittest.TestCase):
         self.assertEqual(payload["kind"], "policy_value")
         self.assertEqual(payload["action_size"], 4)
         self.assertIn("validation_policy_accuracy_history", payload["metadata"])
+
+    def test_policy_value_training_masks_illegal_action_logits(self) -> None:
+        try:
+            import torch  # noqa: F401
+        except ImportError:
+            self.skipTest("PyTorch is not installed.")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            data_path = os.path.join(temp_dir, "masked_examples.jsonl")
+            model_path = os.path.join(temp_dir, "policy_value.json")
+            with open(data_path, "w", encoding="utf-8") as handle:
+                for index in range(12):
+                    action_index = 3 + (index % 2)
+                    handle.write(
+                        json.dumps(
+                            {
+                                "features": [1.0, float(index % 2), 0.0],
+                                "value": 0.0,
+                                "action_index": action_index,
+                                "legal_action_indices": [3, 4],
+                            }
+                        )
+                    )
+                    handle.write("\n")
+
+            history = train_policy_value_model(
+                dataset_path=data_path,
+                model_path=model_path,
+                hidden_size=4,
+                action_size=1000,
+                epochs=1,
+                batch_size=4,
+                device="cpu",
+                validation_fraction=0.0,
+                value_loss_weight=1.0,
+                policy_loss_weight=1.0,
+            )
+
+            with open(model_path, "r", encoding="utf-8") as handle:
+                payload = json.load(handle)
+
+        metadata = payload["metadata"]
+        self.assertEqual(len(history), 1)
+        self.assertEqual(metadata["masked_policy_examples"], 12)
+        self.assertLess(metadata["policy_loss_history"][0], 2.5)
 
     def test_multi_dataset_loader_can_cap_each_dataset(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

@@ -17,6 +17,9 @@ neural = [
   "numpy>=1.26",
   "torch>=2.2",
 ]
+search = [
+  "optuna>=3.6",
+]
 
 [tool.setuptools.packages.find]
 where = ["."]

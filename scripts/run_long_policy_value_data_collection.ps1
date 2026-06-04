@@ -41,6 +41,13 @@ try {
   Write-Host "Workers: $Workers"
   Write-Host "Games per batch: $GamesPerBatch"
 
+  $StartMessage = "Long data collection started. teacher=$TeacherModel target_hours=$Hours deadline=$($Deadline.ToString('o')) dir=$RunDir"
+  powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/notify_important.ps1 `
+    -Title "Grids AI data collection started" `
+    -Message $StartMessage `
+    -Priority default `
+    -Tags "hourglass_flowing_sand"
+
   while ((Get-Date) -lt $Deadline) {
     $Output = Join-Path $RunDir ("batch_{0:D3}.jsonl" -f $Batch)
     $Seed = $SeedBase + $Batch

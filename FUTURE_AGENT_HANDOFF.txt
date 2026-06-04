@@ -1,6 +1,50 @@
 Grids AI future-agent handoff
 Generated: 2026-05-25
 
+Update: 2026-06-03
+- Current strongest model should be treated as:
+  - checkpoints/policy_value_torch_192_blend_20260521-073435.json
+- Promotion gate for this phase:
+  - Candidate must beat that 192 policy/value model with head-to-head score rate >= 55%.
+  - Wilson lower bound must be > 50%.
+  - Required promotion artifacts are champion_model.txt, scripts/play_strongest.cmd, web/assets/model-registry.json, a passing head-to-head report, and a phone notification.
+- A 14-hour data collection completed on 2026-06-04:
+  - Run label: overnight_policy_value_collection_20260603
+  - Directory: neural_data\overnight_policy_value_collection_20260603
+  - Log: logs\overnight_policy_value_collection_20260603.log
+  - Manifest: neural_data\overnight_policy_value_collection_20260603\manifest.json
+  - Teacher: checkpoints/policy_value_torch_192_blend_20260521-073435.json
+  - Result: 43 batches, 545,929 examples, 14.25 elapsed hours.
+  - Finish phone notification was logged at 2026-06-04T05:42:42+02:00.
+- The completed collection is now safe to use for training/search.
+- Post-collection search helper:
+  powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\run_wait_then_optuna_policy_value_search.ps1 -CollectionDir neural_data\overnight_policy_value_collection_20260603 -SearchHours 8 -Trials 40 -Workers 6 -PromoteOnPass
+- Optuna wrapper:
+  - scripts\run_optuna_policy_value_search.ps1 supports -CollectionManifest, -CollectionDir, -NotifyOnStart, -PromoteOnPass, and -ValidateOnly.
+  - It skips collection directories without manifest.json by default.
+  - It defaults to a unique study name and sqlite storage DB per RunLabel, so new overnight-data searches do not reuse stale trials from older datasets.
+  - It writes a transcript and phone-notifies on completion/failure.
+- Promotion audit helper:
+  python scripts\audit_champion_reports.py --top 10
+  This scans reports against the current 192 reference and exits nonzero unless a report meets score >= 55% and Wilson lower > 50%.
+- Recent near misses against the 192 reference:
+  - checkpoints/policy_value_192_finetune_p0p05_lr0p00005_seed20268522_20260603-040421.json scored 0.5625 over 192 games, but Wilson lower was 0.4918, so no promotion.
+  - checkpoints/policy_value_384_widen_refresh_p0_lr0_seed20278522_20260603-113120.json scored 0.546875 over 384 games, Wilson lower 0.4969, so no promotion.
+- Policy/value training now records legal_action_indices in generated datasets and masks illegal policy logits during policy cross entropy. tests/test_neural.py has regression coverage for this path.
+
+Next agent big-picture focus
+- Start by auditing the whole learning loop, not just launching another run:
+  - game rules / reward signal / target shaping
+  - dataset quality and diversity
+  - legal-action policy head and masking
+  - model architecture size vs available data
+  - evaluation statistical power and promotion criteria
+  - browser/portfolio story and reproducible artifacts
+- Use the completed 545,929-example collection for the next serious training/search pass.
+- Keep the 192 policy/value model as the reference until a report passes the explicit promotion gate.
+- Prefer one clear experiment at a time with a manifest, exact data list, checkpoint path, report path, and phone notification.
+- Do not spend money or upload large local-only artifacts without explicit user approval.
+
 Repository
 - Path on this machine: C:\Users\marku\Documents\GitHub\Grids_ai_python
 - Branch at handoff time: main

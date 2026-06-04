@@ -13,7 +13,7 @@ from typing import Callable, Iterable, Sequence
 
 from .bots import DEFAULT_WEIGHTS, Bot, HeuristicBot, RandomBot, load_weights
 from .data import Side
-from .encoding import action_space_for_state, encode_action_index, encode_state_vector, encoded_state_size
+from .encoding import action_space_for_state, encode_action_index, encode_state_vector, encoded_state_size, legal_action_indices
 from .engine import Action, GameState, new_game
 from .training import play_match
 
@@ -34,6 +34,7 @@ class TrainingExample:
     features: list[float]
     value: float
     action_index: int | None = None
+    legal_action_indices: tuple[int, ...] | None = None
     side: str | None = None
     winner: str | None = None
     half_turns: int | None = None
@@ -1129,6 +1130,7 @@ def example_to_json(example: TrainingExample) -> str:
             "features": example.features,
             "value": example.value,
             "action_index": example.action_index,
+            "legal_action_indices": example.legal_action_indices,
             "side": example.side,
             "winner": example.winner,
             "half_turns": example.half_turns,
@@ -1140,10 +1142,17 @@ def example_to_json(example: TrainingExample) -> str:
 def example_from_json(line: str) -> TrainingExample:
     data = json.loads(line)
     features = [float(value) for value in data["features"]]
+    raw_legal_action_indices = data.get("legal_action_indices")
+    parsed_legal_action_indices = (
+        tuple(int(index) for index in raw_legal_action_indices)
+        if raw_legal_action_indices is not None
+        else None
+    )
     return TrainingExample(
         features=features,
         value=float(data["value"]),
         action_index=data.get("action_index"),
+        legal_action_indices=parsed_legal_action_indices,
         side=data.get("side"),
         winner=data.get("winner"),
         half_turns=data.get("half_turns"),
@@ -1705,7 +1714,7 @@ def generate_game_examples(
         }
     else:
         raise ValueError("--teacher must be one of: heuristic, neural.")
-    pending: list[tuple[list[float], int, Side, int]] = []
+    pending: list[tuple[list[float], int, tuple[int, ...], Side, int]] = []
     steps = 0
     turn_safety = state.config.max_half_turns * 8
 
@@ -1717,6 +1726,7 @@ def generate_game_examples(
                 (
                     encode_state_vector(state),
                     encode_action_index(state, action),
+                    tuple(legal_action_indices(state)),
                     state.current_side,
                     state.half_turns_played,
                 )
@@ -1732,11 +1742,12 @@ def generate_game_examples(
             features=features,
             value=target_value(state, side, target_mode),
             action_index=action_index,
+            legal_action_indices=legal_indices,
             side=side.value,
             winner=state.winner.value if state.winner else None,
             half_turns=half_turns,
         )
-        for features, action_index, side, half_turns in pending
+        for features, action_index, legal_indices, side, half_turns in pending
     ]
 
 
@@ -2044,6 +2055,8 @@ def train_torch_policy_value_model(
     device: str,
     value_loss_weight: float,
     policy_loss_weight: float,
+    init_model: PolicyValueNetwork | None,
+    freeze_init_model: bool,
     early_stop_patience: int,
     early_stop_min_delta: float,
     progress: bool,
@@ -2067,6 +2080,7 @@ def train_torch_policy_value_model(
         dtype=torch.long,
         device=target_device,
     )
+    training_legal_action_indices = [example.legal_action_indices for example in examples]
     if validation_examples:
         validation_features = torch.tensor(
             [example.features for example in validation_examples],
@@ -2083,10 +2097,12 @@ def train_torch_policy_value_model(
             dtype=torch.long,
             device=target_device,
         )
+        validation_legal_action_indices = [example.legal_action_indices for example in validation_examples]
     else:
         validation_features = None
         validation_values = None
         validation_actions = None
+        validation_legal_action_indices = None
 
     input_size = int(features.shape[1])
 
@@ -2110,6 +2126,35 @@ def train_torch_policy_value_model(
             return torch.tanh(self.value(hidden)).squeeze(-1), self.policy(hidden)
 
     torch_model = TorchPolicyValueModel().to(target_device)
+    init_hidden_size = None
+    if init_model is not None:
+        if init_model.input_size != input_size:
+            raise ValueError(f"--init-model input_size={init_model.input_size} does not match training input_size={input_size}.")
+        if init_model.hidden_size > hidden_size:
+            raise ValueError(
+                f"--init-model hidden_size={init_model.hidden_size} cannot be copied into smaller --hidden-size={hidden_size}."
+            )
+        if init_model.action_size != action_size:
+            raise ValueError(f"--init-model action_size={init_model.action_size} does not match action_size={action_size}.")
+        init_hidden_size = init_model.hidden_size
+        with torch.no_grad():
+            torch_model.hidden.weight[:init_hidden_size].copy_(
+                torch.tensor(init_model.w1, dtype=torch.float32, device=target_device)
+            )
+            torch_model.hidden.bias[:init_hidden_size].copy_(
+                torch.tensor(init_model.b1, dtype=torch.float32, device=target_device)
+            )
+            torch_model.value.weight[:, :init_hidden_size].copy_(
+                torch.tensor([init_model.value_w], dtype=torch.float32, device=target_device)
+            )
+            torch_model.value.bias.copy_(torch.tensor([init_model.value_b], dtype=torch.float32, device=target_device))
+            torch_model.policy.weight[:, :init_hidden_size].copy_(
+                torch.tensor(init_model.policy_w, dtype=torch.float32, device=target_device)
+            )
+            torch_model.policy.bias.copy_(torch.tensor(init_model.policy_b, dtype=torch.float32, device=target_device))
+            if init_hidden_size < hidden_size:
+                torch_model.value.weight[:, init_hidden_size:].zero_()
+                torch_model.policy.weight[:, init_hidden_size:].zero_()
     optimizer = torch.optim.Adam(torch_model.parameters(), lr=learning_rate)
     batch_size = max(1, batch_size)
     rng = random.Random(seed)
@@ -2126,6 +2171,41 @@ def train_torch_policy_value_model(
     best_epoch = 0
     stale_epochs = 0
     started_at = time.perf_counter()
+    masked_policy_examples = sum(1 for indices in training_legal_action_indices if indices)
+    masked_validation_policy_examples = (
+        sum(1 for indices in validation_legal_action_indices if indices)
+        if validation_legal_action_indices is not None
+        else 0
+    )
+
+    def policy_cross_entropy(
+        logits,
+        targets,
+        batch_legal_action_indices: Sequence[tuple[int, ...] | None],
+    ):
+        if not batch_legal_action_indices or not any(indices for indices in batch_legal_action_indices):
+            return torch.nn.functional.cross_entropy(logits, targets), torch.argmax(logits, dim=1)
+        mask = torch.ones(logits.shape, dtype=torch.bool, device=logits.device)
+        any_masked = False
+        for row, legal_indices in enumerate(batch_legal_action_indices):
+            if not legal_indices:
+                continue
+            valid_indices = {
+                int(index)
+                for index in legal_indices
+                if 0 <= int(index) < action_size
+            }
+            valid_indices.add(int(targets[row].detach().cpu()))
+            if not valid_indices:
+                continue
+            mask[row].zero_()
+            index_tensor = torch.tensor(sorted(valid_indices), dtype=torch.long, device=logits.device)
+            mask[row, index_tensor] = True
+            any_masked = True
+        if not any_masked:
+            return torch.nn.functional.cross_entropy(logits, targets), torch.argmax(logits, dim=1)
+        masked_logits = logits.masked_fill(~mask, torch.finfo(logits.dtype).min)
+        return torch.nn.functional.cross_entropy(masked_logits, targets), torch.argmax(masked_logits, dim=1)
 
     def evaluate_validation() -> tuple[float, float, float, float] | None:
         if validation_features is None or validation_values is None or validation_actions is None:
@@ -2140,12 +2220,13 @@ def train_torch_policy_value_model(
                 values, logits = torch_model(validation_features[start:end])
                 batch_values = validation_values[start:end]
                 batch_actions = validation_actions[start:end]
+                batch_legal_indices = validation_legal_action_indices[start:end] if validation_legal_action_indices else []
                 value_loss = torch.mean((values - batch_values) ** 2)
-                policy_loss = torch.nn.functional.cross_entropy(logits, batch_actions)
+                policy_loss, predictions = policy_cross_entropy(logits, batch_actions, batch_legal_indices)
                 batch_count = int(len(batch_actions))
                 total_value_loss += float(value_loss.detach().cpu()) * batch_count
                 total_policy_loss += float(policy_loss.detach().cpu()) * batch_count
-                correct += int((torch.argmax(logits, dim=1) == batch_actions).sum().detach().cpu())
+                correct += int((predictions == batch_actions).sum().detach().cpu())
                 count += batch_count
         value_loss = total_value_loss / max(count, 1)
         policy_loss = total_policy_loss / max(count, 1)
@@ -2160,15 +2241,24 @@ def train_torch_policy_value_model(
         total_value_loss = 0.0
         total_policy_loss = 0.0
         for start in range(0, len(indices), batch_size):
-            batch_indices = torch.tensor(indices[start : start + batch_size], dtype=torch.long, device=target_device)
+            batch_example_indices = indices[start : start + batch_size]
+            batch_indices = torch.tensor(batch_example_indices, dtype=torch.long, device=target_device)
             values, logits = torch_model(features.index_select(0, batch_indices))
             batch_values = value_targets.index_select(0, batch_indices)
             batch_actions = action_targets.index_select(0, batch_indices)
+            batch_legal_indices = [training_legal_action_indices[index] for index in batch_example_indices]
             value_loss = torch.mean((values - batch_values) ** 2)
-            policy_loss = torch.nn.functional.cross_entropy(logits, batch_actions)
+            policy_loss, _ = policy_cross_entropy(logits, batch_actions, batch_legal_indices)
             loss = value_loss * value_loss_weight + policy_loss * policy_loss_weight
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
+            if freeze_init_model and init_hidden_size is not None:
+                torch_model.hidden.weight.grad[:init_hidden_size].zero_()
+                torch_model.hidden.bias.grad[:init_hidden_size].zero_()
+                torch_model.value.weight.grad[:, :init_hidden_size].zero_()
+                torch_model.value.bias.grad.zero_()
+                torch_model.policy.weight.grad[:, :init_hidden_size].zero_()
+                torch_model.policy.bias.grad.zero_()
             optimizer.step()
             batch_count = len(batch_indices)
             total_loss += float(loss.detach().cpu()) * batch_count
@@ -2242,6 +2332,11 @@ def train_torch_policy_value_model(
         "optimizer": "adam",
         "device": str(target_device),
         "torch_version": str(torch.__version__),
+        "initialized_from_model": init_model is not None,
+        "init_hidden_size": init_hidden_size,
+        "frozen_init_model": bool(freeze_init_model and init_model is not None),
+        "masked_policy_examples": masked_policy_examples,
+        "masked_validation_policy_examples": masked_validation_policy_examples,
         "value_loss_weight": value_loss_weight,
         "policy_loss_weight": policy_loss_weight,
         "value_loss_history": value_history,
@@ -2277,6 +2372,8 @@ def train_policy_value_model(
     value_loss_weight: float = 1.0,
     policy_loss_weight: float = 0.25,
     map_name: str = "plains",
+    init_model_path: str | None = None,
+    freeze_init_model: bool = False,
 ) -> list[float]:
     dataset_paths = [dataset_path] if isinstance(dataset_path, str) else list(dataset_path)
     if not dataset_paths:
@@ -2289,10 +2386,16 @@ def train_policy_value_model(
         raise ValueError("--early-stop-patience must be zero or greater.")
     if early_stop_min_delta < 0:
         raise ValueError("--early-stop-min-delta must be zero or greater.")
-    if value_loss_weight <= 0.0 or policy_loss_weight <= 0.0:
-        raise ValueError("Policy/value loss weights must be positive.")
+    if value_loss_weight <= 0.0 or policy_loss_weight < 0.0:
+        raise ValueError("Value loss weight must be positive and policy loss weight must be non-negative.")
 
     inferred_action_size = action_size or action_space_for_state(new_game(seed=seed, map_name=map_name)).size
+    init_model: PolicyValueNetwork | None = None
+    if init_model_path:
+        loaded_init_model = load_neural_model(init_model_path)
+        if not isinstance(loaded_init_model, PolicyValueNetwork):
+            raise ValueError("--init-model must point to a policy/value model.")
+        init_model = loaded_init_model
     all_examples = load_examples_from_paths(dataset_paths, limit=limit, per_dataset_limit=per_dataset_limit)
     examples = [
         example
@@ -2327,6 +2430,8 @@ def train_policy_value_model(
         device=device,
         value_loss_weight=value_loss_weight,
         policy_loss_weight=policy_loss_weight,
+        init_model=init_model,
+        freeze_init_model=freeze_init_model,
         early_stop_patience=early_stop_patience,
         early_stop_min_delta=early_stop_min_delta,
         progress=progress,
@@ -2347,6 +2452,8 @@ def train_policy_value_model(
         "loss_history": history,
         "action_size": inferred_action_size,
         "map": map_name,
+        "init_model": init_model_path,
+        "freeze_init_model": freeze_init_model,
     }
     metadata.update(backend_metadata)
     model.save(model_path, metadata=metadata)
@@ -2947,6 +3054,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     train_policy.add_argument("--early-stop-min-delta", type=float, default=0.0)
     train_policy.add_argument("--value-loss-weight", type=float, default=1.0)
     train_policy.add_argument("--policy-loss-weight", type=float, default=0.25)
+    train_policy.add_argument("--init-model", help="Optional policy/value checkpoint to fine-tune from.")
+    train_policy.add_argument(
+        "--freeze-init-model",
+        action="store_true",
+        help="When widening from --init-model, freeze copied weights and train only added residual capacity.",
+    )
     train_policy.add_argument("--map", default="plains", choices=["plains", "desert"])
     train_policy.add_argument("--quiet", action="store_true", help="Suppress lightweight per-epoch progress output.")
 
@@ -3115,6 +3228,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 value_loss_weight=args.value_loss_weight,
                 policy_loss_weight=args.policy_loss_weight,
                 map_name=args.map,
+                init_model_path=args.init_model,
+                freeze_init_model=args.freeze_init_model,
             )
         except RuntimeError as exc:
             raise SystemExit(str(exc)) from exc
