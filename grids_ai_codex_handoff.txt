@@ -1,0 +1,586 @@
+# Codex Handoff: Grids AI System Upgrade
+
+Repository:
+DevMarkusLejon/Grids_ai_python
+
+## Goal
+
+Improve the Grids AI system toward a stronger, eventually superhuman game-playing agent.
+
+Do NOT jump directly to MuZero, Deep CFR, ReBeL, or a heavy imperfect-information framework. The current best ROI path is:
+
+1. Improve state/action representation.
+2. Improve policy learning with structured/factorized action heads.
+3. Make neural search faster through batching and caching.
+4. Move from teacher imitation to search-improved self-play / Expert Iteration / AlphaZero-lite.
+5. Strengthen evaluation discipline.
+
+The current system already has:
+- Headless deterministic rules engine.
+- CLI/browser front ends.
+- Random bot.
+- Heuristic bot.
+- Evolution-trained heuristic weights.
+- Neural value model.
+- Policy/value model.
+- Legal-action masking.
+- Neural beam search.
+- Experimental MCTS.
+- Self-play/teacher data generation.
+- Gauntlet evaluation and promotion gates.
+
+The game has:
+- 10x7 board.
+- Current state encoding: 13 board planes over 70 cells + 15 global features = 925 flat inputs.
+- Current policy action space: 10,783 encoded actions.
+- Actual legal actions per state are much fewer, e.g. around 31 in the initial state.
+- Simulation/search is CPU-bound; GPU training exists but is not currently the bottleneck.
+
+## High-level implementation priority
+
+Implement in this order:
+
+1. Audit and preserve the baseline.
+2. Add structured action representation.
+3. Add factorized policy head.
+4. Add structured board encoder.
+5. Add batched neural search and transposition cache.
+6. Add AlphaZero-lite / Expert Iteration loop.
+7. Clean up evaluation governance.
+8. Optionally add RL baselines through Gymnasium/PettingZoo wrappers.
+
+---
+
+# Phase 0 — Audit and preserve baseline
+
+Before changing architecture:
+
+1. Locate current files for:
+   - game state representation
+   - legal action generation
+   - action encoding/decoding
+   - heuristic bot
+   - neural model definitions
+   - neural search / beam search
+   - MCTS if present
+   - training data loader
+   - policy/value training
+   - gauntlet evaluation
+   - model registry / promotion logic
+
+2. Create a short markdown file:
+
+   docs/ai_system_upgrade_audit.md
+
+   Include:
+   - existing commands for training, data generation, evaluation
+   - current model input/output shapes
+   - current checkpoint/reference model names
+   - where legal action masks are generated
+   - where action indices are encoded/decoded
+   - current evaluation/promotion thresholds
+
+3. Add one simple regression command or script that can be run after every change.
+
+   Example target:
+   - run a small deterministic gauntlet
+   - run model forward pass on a sample batch
+   - verify legal action encoding/decoding roundtrip
+   - verify no illegal action can be selected when masks are applied
+
+Do not delete the existing flat MLP or old action encoding. Keep backward compatibility.
+
+Acceptance criteria:
+- Baseline commands are documented.
+- Existing bots still play games.
+- Existing neural checkpoints still load if they loaded before.
+- There is at least one quick regression command/test that can be run after each PR.
+
+---
+
+# Phase 1 — Introduce structured action representation
+
+The current 10,783-way flat action space should remain supported, but add a structured representation alongside it.
+
+Create or extend an action abstraction similar to:
+
+```python
+@dataclass(frozen=True)
+class StructuredAction:
+    action_type: str  # end_turn, draw_unit, draw_item, deploy, move, attack, play_item
+    src: int | None = None      # board index 0..69
+    dst: int | None = None      # board index 0..69
+    hand_idx: int | None = None
+    card_type: str | None = None
+```
+
+Required functionality:
+
+1. structured_to_flat_index(action) -> int
+2. flat_index_to_structured(index) -> StructuredAction
+3. legal_structured_actions(state) -> list[StructuredAction]
+4. legal_flat_indices(state) -> list[int]
+5. build_factorized_masks(state) -> dict[str, Tensor/ndarray]
+
+The masks should support at least:
+- action type mask
+- source cell mask
+- destination/target cell mask
+- hand index mask
+- conditional masks where possible
+
+Keep tests for:
+- all legal actions roundtrip through flat index and back
+- no duplicate flat indices for legal actions
+- all old legal action indices are still representable
+- every generated legal structured action maps to a valid flat action
+
+Acceptance criteria:
+- Existing bots still work.
+- Existing trained checkpoints can still evaluate using old flat action output.
+- New structured action utilities pass tests.
+- No behavior change in game rules.
+
+---
+
+# Phase 2 — Factorized policy head
+
+Add a new policy/value model variant without replacing the old one.
+
+Suggested name:
+
+PolicyValueFactorizedNet
+
+The goal is to predict action components instead of only one 10,783-way softmax.
+
+Recommended heads:
+- type_head: action type logits
+- src_head: 70 board source logits
+- dst_head: 70 board destination/target logits
+- hand_head: max hand size logits, likely 7
+- value_head: scalar value in [-1, 1]
+
+The model should still be able to produce flat-action scores for search by composing component log-probabilities over legal actions.
+
+Implement:
+
+```python
+def score_legal_actions_factorized(model_outputs, legal_actions, masks) -> dict[int, float]:
+    """
+    Return flat_action_index -> logit/log_prior score for each legal action.
+    Used by beam search and MCTS.
+    """
+```
+
+Training objective:
+
+For each teacher action, compute negative log-likelihood as:
+
+```text
+loss_policy =
+    CE(action_type)
+  + CE(src) when relevant
+  + CE(dst) when relevant
+  + CE(hand_idx) when relevant
+```
+
+Use masks so impossible components are ignored.
+
+Also train value as before:
+- outcome target
+- shaped blend if existing training supports it
+
+Acceptance criteria:
+- Factorized model can train on existing stored examples.
+- Factorized model can run inference during legal-action search.
+- Evaluation script can compare:
+  - old flat policy/value model
+  - new factorized policy/value model
+- Report:
+  - top-1 legal teacher action accuracy
+  - top-5 legal teacher action recall
+  - value loss
+  - gauntlet score rate
+
+Do not remove the old flat policy model.
+
+---
+
+# Phase 3 — Structured board encoder
+
+The current state is a flat 925-vector, but the board part already has spatial structure:
+
+- 13 planes
+- 70 cells
+- board is 10x7
+
+Add a model variant that reshapes board planes into [B, 13, 10, 7].
+
+Suggested architecture:
+
+```python
+class GridCNNPolicyValueNet(nn.Module):
+    board_tower: small residual CNN
+    global_mlp: MLP over global features
+    optional hand/card embedding
+    fusion_mlp
+    factorized policy heads
+    value head
+```
+
+Keep it small first:
+- channels: 64 or 96
+- residual blocks: 4 to 8
+- kernel size: 3
+- no huge transformer initially
+
+Important:
+- Keep the old flat MLP as baseline.
+- Make board orientation consistent from the current player’s perspective if the existing encoder already does that.
+- If the existing encoder does not canonicalize perspective, document it and do not silently change semantics unless tests confirm correctness.
+
+Acceptance criteria:
+- CNN model trains on existing examples.
+- CNN model can be used by search.
+- Compare against flat MLP under identical search settings:
+  - no search / policy only
+  - beam search width 3 depth 4
+  - same fixed seed gauntlet
+
+---
+
+# Phase 4 — Batched neural search and transposition cache
+
+Current notes say game simulation/search is CPU-bound. The fastest strength gain may come from better search throughput.
+
+Implement batching for neural leaf evaluation.
+
+Current search probably does something like:
+
+1. expand one candidate
+2. encode state
+3. call model
+4. continue
+
+Change toward:
+
+1. collect many leaf states
+2. encode as batch
+3. one model inference
+4. distribute priors/values back into search
+
+Add:
+
+```python
+class InferenceBatcher:
+    def enqueue(state) -> FuturePrediction
+    def flush() -> dict[state_id, Prediction]
+```
+
+or a simpler synchronous version first:
+
+```python
+predictions = model.predict_batch(list_of_states)
+```
+
+Also add a transposition cache:
+
+```python
+cache_key = stable_hash_state(state)
+cache[cache_key] = Prediction/prior/value/search_node
+```
+
+Requirements:
+- hash must include side to move, AP, board, hands if visible to agent, relevant deck/public info, turn count, and unit states
+- cache should be optional and bounded
+- log cache hit rate
+- do not change game semantics
+
+Metrics to log:
+- states evaluated per second
+- neural inferences per second
+- average batch size
+- cache hit rate
+- average move latency
+- gauntlet score rate at fixed wall-clock budget
+- gauntlet score rate at fixed node budget
+
+Acceptance criteria:
+- Batched search returns legal actions only.
+- Batched search matches or beats old search at same depth/width.
+- Batched search is faster at equivalent settings, or supports deeper/wider search under same wall-clock time.
+
+---
+
+# Phase 5 — AlphaZero-lite / Expert Iteration loop
+
+Do this only after Phases 1–4 are stable.
+
+Current training is mostly imitation/value learning from teacher-generated trajectories. Move toward search-improved self-play.
+
+Implement a generation loop:
+
+1. Use current champion/reference model.
+2. During self-play, choose actions using search, not raw policy.
+3. Store:
+   - encoded state
+   - final outcome z
+   - search-improved policy target over legal actions
+   - selected action
+   - legal action indices
+   - side to move
+   - half-turn
+   - optional margin/material/commander HP metadata
+4. Train candidate policy/value model on replay buffer.
+5. Evaluate candidate in paired-seed gauntlet.
+6. Promote only if promotion criteria pass.
+
+Important design:
+- Store full search distribution if available, not only teacher top-1.
+- If beam search does not naturally produce visit counts, store normalized beam scores over legal candidates as an approximate improved policy target.
+- For MCTS/PUCT, store visit-count distribution.
+
+Suggested replay mixture:
+- 50–70% recent self-play
+- 20–30% older champion/teacher data
+- 10–20% hard positions / rare tactical positions
+
+Add hard-state buffer:
+- positions where search strongly disagrees with raw policy
+- positions with commander lethal threats
+- positions near material swing
+- positions from late game
+- positions where candidate loses to older agents
+
+Acceptance criteria:
+- A single command can run one mini generation:
+  - generate N games
+  - train candidate for small number of epochs
+  - evaluate candidate against reference
+  - write report
+- Results saved with metadata.
+- Promotion does not overwrite champion unless thresholds pass.
+
+---
+
+# Phase 6 — Evaluation governance
+
+Clean up champion/reference confusion.
+
+Introduce explicit model roles:
+
+```text
+official_champion
+active_reference
+experimental_best
+baseline_flat_mlp
+baseline_heuristic
+trained_heuristic
+random
+```
+
+Update registry/reporting so every evaluation states:
+- candidate checkpoint
+- reference checkpoint
+- model role
+- search settings
+- number of games
+- paired seeds yes/no
+- side-swapping yes/no
+- score rate
+- Wilson lower bound
+- average half-turns
+- draws
+- average commander HP diff
+- material diff if available
+
+Promotion rule suggestion:
+- candidate must beat active_reference head-to-head
+- score rate >= 55%
+- Wilson lower bound > 50%
+- no major regression against heuristic/trained heuristic
+- same fixed search budget as reference
+
+Add Elo or Bradley-Terry rating as secondary metric across all stored gauntlets.
+
+Acceptance criteria:
+- Evaluation report is reproducible.
+- Every promoted model has a clear reason.
+- Registry no longer ambiguously labels old value-only model as current champion if a stronger policy/value reference exists.
+
+---
+
+# Phase 7 — Optional RL baselines
+
+Do not make this the main path, but add clean wrappers if easy.
+
+Implement Gymnasium or PettingZoo wrapper with:
+- observation
+- action mask
+- step
+- reset
+- legal action mapping
+- reward
+
+Then test:
+- Maskable PPO
+- A2C
+- maybe DQN only if action factorization is ready
+
+Purpose:
+- baselines
+- ablations
+- sanity check
+- not expected to beat search-improved self-play immediately
+
+Acceptance criteria:
+- Random agent can play through wrapper.
+- Maskable PPO can train without illegal actions.
+- Simple baseline report generated.
+
+---
+
+# Things not to do yet
+
+Do NOT prioritize:
+- MuZero
+- Deep CFR
+- ReBeL
+- DeepNash-like full imperfect-information multi-agent RL
+- huge transformer architecture
+- massive league training before one self-play generation loop works
+- deleting old model formats
+- changing game rules while improving AI
+
+Only revisit imperfect information after measuring whether hidden deck/hand information materially changes decisions.
+
+---
+
+# Suggested first pull request
+
+Make the first PR small and infrastructure-focused.
+
+Title:
+
+Add structured action representation and factorized action masks
+
+Scope:
+- Add StructuredAction
+- Add encode/decode roundtrip between structured actions and flat action index
+- Add legal structured action generation wrapper
+- Add factorized mask builder
+- Add tests
+- Add short audit doc
+- Do not change model training yet
+
+Expected files may include:
+- action encoding module
+- legal action module
+- tests
+- docs/ai_system_upgrade_audit.md
+
+PR acceptance:
+- Existing tests pass.
+- New action roundtrip tests pass.
+- Existing bots still play games.
+- Existing neural search still works.
+- No checkpoint format broken.
+
+After this PR, proceed to factorized policy head.
+
+---
+
+# Suggested second pull request
+
+Title:
+
+Add factorized policy/value model variant
+
+Scope:
+- Add PolicyValueFactorizedNet
+- Add loss for action type/source/destination/hand heads
+- Add scoring function that converts factorized outputs to legal flat-action scores
+- Add training/evaluation path for factorized model
+- Preserve all old model formats
+
+PR acceptance:
+- Factorized model trains on current examples.
+- It can be evaluated in gauntlets.
+- It reports top-1 and top-5 legal teacher action accuracy.
+- It can be used by neural search without illegal action selection.
+
+---
+
+# Suggested third pull request
+
+Title:
+
+Add grid CNN encoder for policy/value models
+
+Scope:
+- Reshape board part of state into [13, 10, 7]
+- Add small residual CNN tower
+- Fuse board features with global features
+- Support factorized heads
+- Add comparison script versus flat MLP
+
+PR acceptance:
+- CNN model trains.
+- CNN model can be used in beam search.
+- Evaluation report compares flat MLP vs CNN under identical settings.
+
+---
+
+# Suggested fourth pull request
+
+Title:
+
+Batch neural inference inside search
+
+Scope:
+- Batch leaf evaluation
+- Add optional transposition cache
+- Add metrics for states/sec, inference/sec, average batch size, cache hit rate, move latency
+- Keep old non-batched search as fallback
+
+PR acceptance:
+- Same-depth/width search gives legal actions.
+- Batched search is faster or supports stronger search under same wall-clock time.
+- Gauntlet report includes timing metrics.
+
+---
+
+# Suggested fifth pull request
+
+Title:
+
+Add mini Expert Iteration self-play loop
+
+Scope:
+- Generate self-play games using search
+- Store search-improved policy targets
+- Train candidate from replay buffer
+- Evaluate against active reference
+- Promote only if criteria pass
+
+PR acceptance:
+- One command can run a small generation.
+- Candidate reports saved with metadata.
+- Promotion is gated and reproducible.
+
+---
+
+# Final principle
+
+Do not rewrite the whole system at once.
+
+The correct path is:
+
+1. Keep the current system working.
+2. Add structured action representation.
+3. Add factorized policy heads.
+4. Add spatial board encoder.
+5. Make search faster.
+6. Then run search-improved self-play.
+
+This path gives the best chance of measurable strength gains without destabilizing the existing AI stack.
