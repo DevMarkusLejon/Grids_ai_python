@@ -13,7 +13,31 @@
     return path.split(/[\\/]/).pop();
   };
 
+  const fmtInteger = (value) => {
+    if (typeof value !== "number") {
+      return "0";
+    }
+    return new Intl.NumberFormat().format(value);
+  };
+
   const shortModel = (path) => basename(path).replace(/^value_model_/, "").replace(/\.json$/, "");
+
+  const labelForStatus = (status) => {
+    if (status === "current_champion") {
+      return "Champion";
+    }
+    if (status === "promoted") {
+      return "Promoted once";
+    }
+    return "Challenger";
+  };
+
+  const labelForArtifact = (status) => {
+    if (status === "local") {
+      return "Local";
+    }
+    return "Missing";
+  };
 
   const setText = (id, text) => {
     const element = document.getElementById(id);
@@ -27,15 +51,17 @@
     body.innerHTML = "";
     models.slice(0, 16).forEach((model) => {
       const row = document.createElement("tr");
-      const status = model.is_current_champion ? "Champion" : model.promoted ? "Promoted once" : "Challenger";
+      const status = labelForStatus(model.promotion_status);
       row.innerHTML = `
         <td>${model.rank}</td>
         <td><span class="lab-model-name" title="${model.model}">${shortModel(model.model)}</span></td>
         <td>${model.rating}</td>
         <td>${fmtPercent(model.best_overall_score)}</td>
         <td>${fmtPercent(model.head_to_head_vs_champion)}</td>
+        <td>${fmtPercent(model.head_to_head_lower_bound)}</td>
         <td>${model.games || 0}</td>
         <td><span class="pill">${status}</span></td>
+        <td><span class="pill">${labelForArtifact(model.artifact_status)}</span></td>
       `;
       body.appendChild(row);
     });
@@ -56,6 +82,8 @@
         <div class="lab-report-stats">
           <span>${fmtPercent(report.overall_score)} overall</span>
           <span>${fmtPercent(report.head_to_head_score)} vs champion</span>
+          <span>${fmtPercent(report.head_to_head_lower_bound)} lower</span>
+          <span>${report.head_to_head_games || 0} games</span>
           <span>${promoted}</span>
         </div>
       `;
@@ -71,8 +99,9 @@
       }
       const registry = await response.json();
       setText("champion-model", shortModel(registry.champion_model));
-      setText("model-count", String(registry.summary?.models || 0));
-      setText("report-count", String(registry.summary?.reports || 0));
+      setText("model-count", fmtInteger(registry.summary?.models || 0));
+      setText("report-count", fmtInteger(registry.summary?.reports || 0));
+      setText("games-played-count", fmtInteger(registry.summary?.total_games || 0));
       setText("generated-at", registry.generated_at ? new Date(registry.generated_at).toLocaleString() : "-");
       renderLeaderboard(registry.models || []);
       renderReports(registry.reports || []);

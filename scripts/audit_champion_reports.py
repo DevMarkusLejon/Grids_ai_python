@@ -3,7 +3,18 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import sys
 from typing import Any, Iterable
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from grids_ai.experiment import (
+    DEFAULT_MIN_HEAD_TO_HEAD_LOWER_BOUND,
+    DEFAULT_MIN_HEAD_TO_HEAD_SCORE,
+    required_games_for_wilson_gate,
+)
 
 
 def iter_report_paths(report_dir: Path) -> Iterable[Path]:
@@ -51,8 +62,8 @@ def build_parser() -> argparse.ArgumentParser:
         default="checkpoints/policy_value_torch_192_blend_20260521-073435.json",
         help="Current strongest model that candidates must beat.",
     )
-    parser.add_argument("--min-score", type=float, default=0.55)
-    parser.add_argument("--min-lower-bound", type=float, default=0.50)
+    parser.add_argument("--min-score", type=float, default=DEFAULT_MIN_HEAD_TO_HEAD_SCORE)
+    parser.add_argument("--min-lower-bound", type=float, default=DEFAULT_MIN_HEAD_TO_HEAD_LOWER_BOUND)
     parser.add_argument("--top", type=int, default=10)
     parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
     return parser
@@ -89,6 +100,11 @@ def main() -> int:
         "passing_reports": passing,
         "best_reports": rows[: max(0, args.top)],
     }
+    for row in rows:
+        row["required_games_at_observed_score"] = required_games_for_wilson_gate(
+            row["head_to_head_score_rate"],
+            min_lower_bound=args.min_lower_bound,
+        )
     if args.json:
         print(json.dumps(summary, indent=2, sort_keys=True))
     else:
@@ -101,6 +117,7 @@ def main() -> int:
                 f"{marker} score={row['head_to_head_score_rate']:.6f} "
                 f"lower={row['head_to_head_lower_bound']:.6f} "
                 f"games={row['head_to_head_games']} "
+                f"needed_at_score={row['required_games_at_observed_score']} "
                 f"candidate={row['candidate']} "
                 f"report={row['report']}"
             )

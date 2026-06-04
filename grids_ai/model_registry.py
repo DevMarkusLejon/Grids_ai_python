@@ -11,6 +11,7 @@ from typing import Any, Sequence
 
 
 DEFAULT_CHAMPION_MODEL = "checkpoints/value_model_torch_128_shaped_1000_300hp.json"
+MAX_CHECKPOINT_METADATA_BYTES = 5 * 1024 * 1024
 
 
 @dataclass
@@ -27,6 +28,7 @@ class ModelSummary:
     best_overall_score: float | None = None
     latest_overall_score: float | None = None
     head_to_head_vs_champion: float | None = None
+    head_to_head_lower_bound: float | None = None
     head_to_head_games: int | None = None
     promoted: bool = False
     latest_report: str | None = None
@@ -62,6 +64,10 @@ def _score_label(row: dict[str, Any]) -> tuple[int, int, int, int]:
     return wins, losses, draws, games
 
 
+def _report_total_games(payload: dict[str, Any], overall: dict[str, Any]) -> int:
+    return int(payload.get("total_games", overall.get("wins", 0) + overall.get("losses", 0) + overall.get("draws", 0)))
+
+
 def _opponent_id(row: dict[str, Any]) -> str:
     metadata = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
     model = metadata.get("model")
@@ -93,6 +99,11 @@ def _load_checkpoint_metadata(checkpoints_dir: Path, root: Path) -> dict[str, di
         return metadata_by_model
 
     for path in checkpoints_dir.rglob("*.json"):
+        try:
+            if path.stat().st_size > MAX_CHECKPOINT_METADATA_BYTES:
+                continue
+        except OSError:
+            continue
         payload = _read_json(path)
         if not payload or "hidden_size" not in payload or "input_size" not in payload:
             continue
@@ -158,6 +169,7 @@ def build_model_registry(
     ratings: dict[str, float] = {}
     models: dict[str, ModelSummary] = {}
     report_rows: list[dict[str, Any]] = []
+    models.setdefault(_as_posix(champion_model), ModelSummary(model=_as_posix(champion_model)))
 
     for model_path, metadata in checkpoint_metadata.items():
         summary = models.setdefault(model_path, ModelSummary(model=model_path))
@@ -201,12 +213,15 @@ def build_model_registry(
         summary.wins += int(overall.get("wins", 0))
         summary.losses += int(overall.get("losses", 0))
         summary.draws += int(overall.get("draws", 0))
-        summary.games += int(payload.get("total_games", overall.get("wins", 0) + overall.get("losses", 0) + overall.get("draws", 0)))
+        total_games = _report_total_games(payload, overall)
+        summary.games += total_games
 
         if decision:
             summary.promoted = summary.promoted or bool(decision.get("promote"))
             if isinstance(decision.get("head_to_head_score_rate"), (int, float)):
                 summary.head_to_head_vs_champion = float(decision["head_to_head_score_rate"])
+            if isinstance(decision.get("head_to_head_lower_bound"), (int, float)):
+                summary.head_to_head_lower_bound = float(decision["head_to_head_lower_bound"])
             if isinstance(decision.get("head_to_head_games"), int):
                 summary.head_to_head_games = int(decision["head_to_head_games"])
 
@@ -225,9 +240,11 @@ def build_model_registry(
                 "model": candidate,
                 "mtime": mtime,
                 "overall_score": summary.latest_overall_score,
-                "total_games": payload.get("total_games"),
+                "total_games": total_games,
                 "promoted": bool(decision.get("promote")) if decision else False,
                 "head_to_head_score": decision.get("head_to_head_score_rate") if decision else None,
+                "head_to_head_lower_bound": decision.get("head_to_head_lower_bound") if decision else None,
+                "head_to_head_games": decision.get("head_to_head_games") if decision else None,
                 "reason": decision.get("reason") if decision else None,
             }
         )
@@ -240,6 +257,7 @@ def build_model_registry(
         sorted(models.values(), key=lambda item: (item.rating, item.best_overall_score or 0.0, item.latest_report_mtime), reverse=True),
         start=1,
     ):
+        is_current_champion = _as_posix(summary.model) == _as_posix(champion_model)
         model_rows.append(
             {
                 "rank": rank,
@@ -255,9 +273,12 @@ def build_model_registry(
                 "best_overall_score": summary.best_overall_score,
                 "latest_overall_score": summary.latest_overall_score,
                 "head_to_head_vs_champion": summary.head_to_head_vs_champion,
+                "head_to_head_lower_bound": summary.head_to_head_lower_bound,
                 "head_to_head_games": summary.head_to_head_games,
                 "promoted": summary.promoted,
-                "is_current_champion": _as_posix(summary.model) == _as_posix(champion_model),
+                "is_current_champion": is_current_champion,
+                "promotion_status": "current_champion" if is_current_champion else "promoted" if summary.promoted else "challenger",
+                "artifact_status": "local" if (root_path / summary.model).exists() else "missing_local_checkpoint",
                 "latest_report": summary.latest_report,
                 "metadata": summary.metadata,
             }
@@ -274,6 +295,7 @@ def build_model_registry(
             "models": len(model_rows),
             "reports": len(report_rows),
             "rated_models": sum(1 for row in model_rows if row["reports"] > 0),
+            "total_games": sum(row["total_games"] for row in report_rows),
         },
     }
 
@@ -305,7 +327,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     write_registry_json(registry, args.output)
     print(
         f"Wrote {args.output} with {registry['summary']['models']} models "
-        f"and {registry['summary']['reports']} reports."
+        f"and {registry['summary']['reports']} reports "
+        f"covering {registry['summary']['total_games']} games."
     )
     return 0
 

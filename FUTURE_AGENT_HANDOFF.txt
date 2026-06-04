@@ -32,6 +32,42 @@ Update: 2026-06-03
   - checkpoints/policy_value_384_widen_refresh_p0_lr0_seed20278522_20260603-113120.json scored 0.546875 over 384 games, Wilson lower 0.4969, so no promotion.
 - Policy/value training now records legal_action_indices in generated datasets and masks illegal policy logits during policy cross entropy. tests/test_neural.py has regression coverage for this path.
 
+Update: 2026-06-04 handoff-ready repo state
+- Implemented experiment/tooling improvements:
+  - Added grids_ai/experiment.py with shared Wilson lower-bound, promotion-gate, required-games, and manifest helpers.
+  - Champion gate now uses strict handoff semantics: head-to-head score >= 55%, overall score >= 55%, Wilson lower bound > 50%.
+  - scripts/audit_champion_reports.py now works from repo root and prints needed_at_score for underpowered near misses.
+  - scripts/optuna_policy_value_search.py writes a compact manifest next to each Optuna summary.
+  - scripts/run_optuna_policy_value_search.ps1 supports -OnlyRequestedData, adds requested collection data before default data, stops repeating a single primary file by default, and includes policy-loss choices up to 0.1.
+  - Model registry generation skips large checkpoint JSON reads, includes missing/local artifact status, and is fast enough to refresh routinely.
+  - AI Lab now shows lower-bound and artifact status columns.
+  - pyproject.toml now has dev extras, pytest config, and console script entry points.
+  - scripts/check_web_js.cmd checks both web/app.js and web/ai-lab.js.
+- Verification after these changes:
+  - python -m pytest -q passed: 56 tests.
+  - cmd /c scripts\check_web_js.cmd passed.
+  - python -m grids_ai.model_registry --output web/assets/model-registry.json completed quickly.
+- New promotion evidence:
+  - reports/champion_gate_192_finetune_p0p05_confirm_20260604.json:
+    - Candidate checkpoints/policy_value_192_finetune_p0p05_lr0p00005_seed20268522_20260603-040421.json scored 191W-193L over 384 games, score 0.4974, Wilson lower 0.4477. No promotion.
+  - reports/champion_gate_384_refresh_p0_confirm_20260604.json:
+    - Candidate checkpoints/policy_value_384_widen_refresh_p0_lr0_seed20278522_20260603-113120.json scored 265W-247L over 512 games, score 0.5176, Wilson lower 0.4743. No promotion.
+  - reports/optuna/optuna_policy_value_search_20260604-111315_summary.json:
+    - 2-hour mixed-data Optuna search completed 2 trials.
+    - Best screened candidate was checkpoints/optuna/policy_value_optuna_trial0000_h512_p0p001_lr3p989224em06_seed20370603.json with screen score 0.4479 and lower 0.3524. No promotion.
+- Interrupted run:
+  - A corrected overnight-only Optuna search was started with:
+    powershell -NoProfile -ExecutionPolicy Bypass -File scripts\run_optuna_policy_value_search.ps1 -CollectionDir neural_data\overnight_policy_value_collection_20260603 -OnlyRequestedData -Hours 3 -Trials 8 -Workers 6 -ScreenGames 48 -FullGateGames 128 -PromoteOnPass -NotifyOnStart
+  - It was intentionally stopped for this handoff while trial 0 was still training.
+  - Do not treat optuna_policy_value_search_20260604-143843 as completed evidence.
+  - Any partial checkpoints/optuna or optuna DB artifacts are local-only and ignored.
+- Current audit:
+  - python scripts\audit_champion_reports.py --top 12 reports 0 passing reports against checkpoints/policy_value_torch_192_blend_20260521-073435.json.
+- Recommended next experiment:
+  - Restart the corrected overnight-only Optuna command above, or a longer version of it, after confirming the worktree is clean.
+  - Keep -OnlyRequestedData for a focused search on the 545,929-example overnight collection.
+  - Keep the 192 policy/value model as the reference until a report passes the gate.
+
 Next agent big-picture focus
 - Start by auditing the whole learning loop, not just launching another run:
   - game rules / reward signal / target shaping

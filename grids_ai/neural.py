@@ -15,6 +15,7 @@ from .bots import DEFAULT_WEIGHTS, Bot, HeuristicBot, RandomBot, load_weights
 from .data import Side
 from .encoding import action_space_for_state, encode_action_index, encode_state_vector, encoded_state_size, legal_action_indices
 from .engine import Action, GameState, new_game
+from .experiment import promotion_gate_decision, wilson_lower_bound
 from .training import play_match
 
 
@@ -2831,15 +2832,6 @@ def run_value_gauntlet(
     }
 
 
-def wilson_lower_bound(score_rate: float, total_games: int, *, z: float = 1.96) -> float:
-    if total_games <= 0:
-        return 0.0
-    denominator = 1.0 + z * z / total_games
-    center = score_rate + z * z / (2.0 * total_games)
-    margin = z * math.sqrt((score_rate * (1.0 - score_rate) + z * z / (4.0 * total_games)) / total_games)
-    return max(0.0, (center - margin) / denominator)
-
-
 def run_champion_gauntlet(
     *,
     candidate_model_path: str,
@@ -2915,27 +2907,19 @@ def run_champion_gauntlet(
 
     head_to_head_score = float(champion_row["score_rate"])
     head_to_head_games = int(champion_row["total_games"])
-    head_to_head_lower_bound = wilson_lower_bound(head_to_head_score, head_to_head_games)
     overall_score = float(result["overall"]["score_rate"])
-    promote = (
-        head_to_head_score >= min_head_to_head_score
-        and overall_score >= min_overall_score
-        and head_to_head_lower_bound >= min_head_to_head_lower_bound
+    decision = promotion_gate_decision(
+        head_to_head_score_rate=head_to_head_score,
+        head_to_head_games=head_to_head_games,
+        overall_score_rate=overall_score,
+        min_head_to_head_score=min_head_to_head_score,
+        min_overall_score=min_overall_score,
+        min_head_to_head_lower_bound=min_head_to_head_lower_bound,
     )
     result["champion_decision"] = {
         "candidate_model": candidate_model_path,
         "champion_model": champion_model_path,
-        "promote": promote,
-        "reason": "candidate cleared promotion thresholds" if promote else "candidate did not clear promotion thresholds",
-        "head_to_head_score_rate": head_to_head_score,
-        "head_to_head_games": head_to_head_games,
-        "head_to_head_lower_bound": head_to_head_lower_bound,
-        "overall_score_rate": overall_score,
-        "thresholds": {
-            "min_head_to_head_score": min_head_to_head_score,
-            "min_overall_score": min_overall_score,
-            "min_head_to_head_lower_bound": min_head_to_head_lower_bound,
-        },
+        **decision,
     }
     return result
 

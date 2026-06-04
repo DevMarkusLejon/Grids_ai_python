@@ -20,6 +20,17 @@ neural = [
 search = [
   "optuna>=3.6",
 ]
+dev = [
+  "pytest>=8.0",
+]
+
+[project.scripts]
+grids-ai = "grids_ai.cli:main"
+grids-ai-neural = "grids_ai.neural:main"
+grids-ai-registry = "grids_ai.model_registry:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
 
 [tool.setuptools.packages.find]
 where = ["."]

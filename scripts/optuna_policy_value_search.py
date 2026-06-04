@@ -9,6 +9,12 @@ import sys
 import time
 from typing import Any, Sequence
 
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from grids_ai.experiment import ExperimentManifest, write_experiment_manifest
+
 
 def parse_int_choices(raw: str) -> list[int]:
     values = [int(part.strip()) for part in raw.split(",") if part.strip()]
@@ -178,7 +184,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--policy-loss-weight-choices",
         type=parse_float_choices,
-        default=parse_float_choices("0,0.001,0.005,0.01,0.02"),
+        default=parse_float_choices("0,0.001,0.005,0.01,0.02,0.05,0.1"),
     )
     parser.add_argument("--learning-rate-min", type=float, default=1e-6)
     parser.add_argument("--learning-rate-max", type=float, default=5e-5)
@@ -449,6 +455,44 @@ def main(argv: Sequence[str] | None = None) -> int:
         "trials": len(study.trials),
     }
     summary_path = report_dir / f"{args.study_name}_summary.json"
+    summary_path.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    manifest_path = report_dir / f"{args.study_name}.manifest.json"
+    write_experiment_manifest(
+        ExperimentManifest(
+            run_label=args.study_name,
+            kind="optuna_policy_value_search",
+            reference_model=args.reference_model,
+            datasets=tuple(args.data),
+            checkpoints=(
+                (str(best_trial.user_attrs["candidate_model"]),)
+                if best_trial and "candidate_model" in best_trial.user_attrs
+                else ()
+            ),
+            reports=tuple(
+                str(value)
+                for value in (
+                    best_trial.user_attrs.get("screen_report") if best_trial else None,
+                    best_trial.user_attrs.get("full_report") if best_trial else None,
+                    str(summary_path),
+                )
+                if value
+            ),
+            parameters={
+                "trials": args.trials,
+                "timeout_hours": args.timeout_hours,
+                "workers": args.workers,
+                "screen_games": args.screen_games,
+                "full_gate_games": args.full_gate_games,
+                "policy_scale": args.policy_scale,
+                "neural_search_width": args.neural_search_width,
+                "neural_search_depth": args.neural_search_depth,
+                "device": args.device,
+                "storage": args.storage,
+            },
+        ),
+        manifest_path,
+    )
+    summary["manifest"] = str(manifest_path)
     summary_path.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(json.dumps(summary, indent=2, sort_keys=True))
     return 0

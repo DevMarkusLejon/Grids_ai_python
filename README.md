@@ -296,15 +296,42 @@ self-play data, model checkpoints, accelerated value training, and a neural valu
 later grow into a CNN or policy/value network.
 
 For longer runs on a remote machine, see [`cloud/README.md`](./cloud/README.md). The current cloud
-setup is CPU-first and parallelizes self-play with `--workers`; GPU rental becomes more useful once
-the model backend moves to PyTorch or batched neural inference.
+setup still spends most wall-clock time in CPU game simulation and search, while Torch policy/value
+training can use a GPU for the model fitting phase.
+
+Audit champion-gate reports against the current 192 policy/value reference:
+
+```bash
+python scripts/audit_champion_reports.py --top 10
+```
+
+The audit reports each candidate's score, Wilson lower bound, played games, and the approximate
+game count needed for the observed score rate to clear the lower-bound gate.
 
 ## Tests
 
-The test suite uses the standard library:
+Install development dependencies when needed:
+
+```bash
+python -m pip install -e ".[dev]"
+```
+
+Run the full Python test suite:
+
+```bash
+python -m pytest -q
+```
+
+The tests also run through the standard-library discovery path:
 
 ```bash
 python -m unittest discover -s tests
+```
+
+Check browser JavaScript syntax:
+
+```cmd
+scripts\check_web_js.cmd
 ```
 
 ## Rule Mapping Notes

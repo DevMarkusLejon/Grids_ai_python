@@ -46,6 +46,7 @@ class ModelRegistryTests(unittest.TestCase):
                     "champion_model": champion,
                     "promote": True,
                     "head_to_head_score_rate": 0.75,
+                    "head_to_head_lower_bound": 0.31,
                     "head_to_head_games": 4,
                     "reason": "candidate cleared promotion thresholds",
                 },
@@ -65,7 +66,12 @@ class ModelRegistryTests(unittest.TestCase):
         self.assertIn(champion, rows)
         self.assertTrue(rows[candidate]["promoted"])
         self.assertEqual(rows[candidate]["head_to_head_vs_champion"], 0.75)
+        self.assertEqual(rows[candidate]["head_to_head_lower_bound"], 0.31)
+        self.assertEqual(rows[candidate]["promotion_status"], "promoted")
+        self.assertEqual(rows[candidate]["artifact_status"], "local")
         self.assertGreater(rows[candidate]["rating"], rows[champion]["rating"])
+        self.assertEqual(registry["summary"]["total_games"], 4)
+        self.assertEqual(registry["reports"][0]["head_to_head_lower_bound"], 0.31)
 
     def test_registry_json_writer_creates_parent_directory(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

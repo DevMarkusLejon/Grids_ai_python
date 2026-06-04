@@ -4,6 +4,7 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 *.egg-info/
+.playwright-cli/
 .env
 .venv-gpu/
 local_notify_config.ps1
@@ -12,12 +13,14 @@ neural_data/
 training_logs/
 cloud_results/
 logs/
+/optuna/
 tmp_tests/
 
 checkpoints/long-*.json
 checkpoints/value_model*.json
 checkpoints/value_model_*.json
 checkpoints/policy_value*.json
+checkpoints/optuna/
 checkpoints/smoke*.json
 
 .DS_Store

@@ -11,3 +11,4 @@ if not exist "%BUNDLED_NODE%" (
 
 "%BUNDLED_NODE%" --version
 "%BUNDLED_NODE%" --check "%REPO_ROOT%\web\app.js"
+"%BUNDLED_NODE%" --check "%REPO_ROOT%\web\ai-lab.js"

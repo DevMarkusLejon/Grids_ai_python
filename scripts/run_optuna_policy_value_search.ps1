@@ -13,6 +13,7 @@ param(
   [string[]]$CollectionDir = @(),
   [string[]]$CollectionManifest = @(),
   [switch]$IncludeIncompleteCollections,
+  [switch]$OnlyRequestedData,
   [switch]$SkipLatestCompletedCollection,
   [switch]$ValidateOnly,
   [switch]$NotifyOnStart,
@@ -124,7 +125,7 @@ function Add-TrainingDataManifest {
   }
 }
 
-@(
+$DefaultTrainingData = @(
   "neural_data/selfplay_192_teacher_refresh_20260603-102147.jsonl",
   "neural_data/teacher_192_policy_value_20260602-234805.jsonl",
   "neural_data/overnight_policy_value_300hp_20260520-233904.jsonl",
@@ -134,11 +135,7 @@ function Add-TrainingDataManifest {
   "neural_data/long_policy_value_collection_20260521-084951/batch_004.jsonl",
   "neural_data/long_policy_value_collection_20260521-084951/batch_005.jsonl",
   "neural_data/selfplay_policy_value_128_blend_300hp_20260520-232410.jsonl"
-) | ForEach-Object { Add-TrainingDataFile $_ }
-
-foreach ($Path in $ExtraData) {
-  Add-TrainingDataFile $Path
-}
+)
 
 foreach ($Path in $CollectionManifest) {
   Add-TrainingDataManifest $Path
@@ -148,13 +145,23 @@ foreach ($Path in $CollectionDir) {
   Add-TrainingDataDirectory $Path
 }
 
-if (-not $SkipLatestCompletedCollection) {
+if (-not $OnlyRequestedData -and -not $SkipLatestCompletedCollection) {
   $LatestManifest = Get-ChildItem -LiteralPath "neural_data" -Directory -ErrorAction SilentlyContinue |
     Where-Object { $_.Name -match "policy_value_collection" -and (Test-Path -LiteralPath (Join-Path $_.FullName "manifest.json")) } |
     Sort-Object LastWriteTime -Descending |
     Select-Object -First 1
   if ($LatestManifest) {
     Add-TrainingDataManifest (Join-Path $LatestManifest.FullName "manifest.json")
+  }
+}
+
+foreach ($Path in $ExtraData) {
+  Add-TrainingDataFile $Path
+}
+
+if (-not $OnlyRequestedData) {
+  foreach ($Path in $DefaultTrainingData) {
+    Add-TrainingDataFile $Path
   }
 }
 
@@ -194,12 +201,12 @@ $Args = @(
   "--full-gate-games", "$FullGateGames",
   "--full-gate-score", "0.54",
   "--hidden-sizes", "192,384,512",
-  "--policy-loss-weight-choices", "0,0.001,0.005,0.01,0.02",
+  "--policy-loss-weight-choices", "0,0.001,0.005,0.01,0.02,0.05,0.1",
   "--learning-rate-min", "0.000001",
   "--learning-rate-max", "0.00005",
   "--epoch-choices", "3,4,5,6",
   "--per-data-limit-choices", "30000,60000,90000",
-  "--primary-repeat-choices", "1,2,3"
+  "--primary-repeat-choices", "1"
 )
 
 foreach ($Path in $TrainingData) {
