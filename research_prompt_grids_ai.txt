@@ -1,0 +1,138 @@
+Research prompt: Grids AI system review and improvement suggestions
+
+We are building AI for a simplified tactical board/card game called Grids AI, implemented in Python with a headless rules engine plus CLI/browser front ends. The goal is to build a strong, eventually superhuman, AI for this specific game.
+
+The game is a deterministic tactical game after deck shuffling/initial randomness. It uses a 10x7 grid, two sides, unit cards, item cards, action points, deployment zones, movement, attacks, healing, and commander defeat as the main win condition.
+
+Game rules
+
+- Board: 10x7, default map plains.
+- Blue commander starts at (1,3), red commander at (8,3).
+- Each side has a deployment column: blue deploys on x=0, red deploys on x=9.
+- Blockers on plains map: (6,1), (5,2), (4,4), (3,5).
+- Each half-turn gives the active player 7 action points.
+- Starting hand size is 5; max hand size is 7.
+- Drawing a unit card costs 1 AP. Drawing an item card costs 1 AP.
+- Maximum game length is 80 half-turns; unresolved games use a material/commander/pressure score tiebreak.
+- Legal actions are: end_turn, draw_unit, draw_item, deploy, move, attack, play_item.
+
+Units
+
+- Commander: 300 HP, 20 damage, move 2, range 1, cannot be deployed, losing it loses the game.
+- Warrior: 100 HP, 40 damage, move 2, range 1, deploy cost 2.
+- Archer: 80 HP, 20 damage, move 2, range 4, deploy cost 2.
+- Healer: 80 HP, heals 30, move 3, range 3, deploy cost 2.
+- Assassin: 70 HP, 35 damage, move 3, range 1, deploy cost 1.
+- Viking: 110 HP, 30 damage, move 2, range 1, deploy cost 2.
+
+Decks
+
+- Unit deck: two each of Warrior, Archer, Viking, Assassin, Healer.
+- Item deck: two Fireballs and two Strength Tonics.
+
+Items
+
+- Fireball: cost 1, deals 30 damage to any enemy unit globally.
+- Strength Tonic: cost 2, gives any friendly unit permanent +10 damage.
+
+Movement and attacks
+
+- Movement is orthogonal, Manhattan-grid movement.
+- Units cannot move through blockers or occupied cells.
+- Attacks use Manhattan range.
+- Non-healer units attack enemy units and can attack once per turn.
+- Healers heal damaged friendly units in range, not themselves.
+- Attacks cost 1 AP.
+- Damaging attacks apply knockback by one cell directly away from the attacker if the target cell is in bounds, unblocked, and unoccupied.
+- A unit reduced to 0 HP is removed.
+- Defeating the enemy commander immediately wins.
+
+Current AI setup
+
+The system has several layers of AI:
+
+1. Random bot
+   - Chooses uniformly among legal actions.
+
+2. Heuristic bot
+   - Uses hand-written weighted features.
+   - Features include commander HP deltas, unit kills/losses, total HP, unit value, forward pressure, commander distance, commander threats, lethal threats, healing value, overkill, hand size, action type bonuses, remaining AP, win/loss.
+   - Can act greedily or use a short same-turn beam search.
+   - Typical planner settings are around width 3-5, depth 4-6.
+
+3. Evolutionary heuristic training
+   - Mutates heuristic weights.
+   - Evaluates candidates through paired-seed matches against a rolling champion pool, fixed archetype benchmarks, and random bots.
+   - Scores combine win/loss, margin, speed, commander health, material, board control, hand resources, timeout penalty, and consistency.
+   - This produced trained_weights.json, used as a fallback/search evaluator.
+
+4. Neural value models
+   - Input state vector size: 925.
+   - State encoding is 13 board planes over 70 cells plus 15 global features.
+   - The value model is a compact tanh MLP with one hidden layer.
+   - It predicts game outcome/value from the current state.
+   - Training targets can be raw outcome, final margin, or a shaped blend: outcome 65%, margin 25%, speed 10%.
+
+5. Policy/value models
+   - Shared tanh MLP trunk.
+   - Value head predicts position value.
+   - Policy head predicts the teacher-chosen encoded action.
+   - Action space size: 10,783.
+   - Initial legal actions in a new game: about 31.
+   - Action encoding covers end turn, draw unit, draw item, all source/destination moves, source/target attacks, hand-index deployments, and hand-index item targets.
+   - Policy training now masks illegal actions during cross entropy when legal action indices are available.
+
+6. Neural search during play
+   - Neural bots do not simply sample the policy.
+   - They combine heuristic score, neural value, and, for policy/value models, legal-action policy prior.
+   - Main strong mode is policy-prior beam search, typically neural-search-width=3, neural-search-depth=4, policy-scale=18.
+   - There is also experimental bounded same-turn MCTS guided by policy priors and value leaves, but current notes say policy-prior beam search is stronger.
+
+Training data setup
+
+Training data is generated from self-play / teacher play, but it is not full AlphaZero-style reinforcement learning yet. It is closer to imitation learning plus value learning from teacher-generated trajectories.
+
+Data generation:
+
+- Teacher can be heuristic or neural.
+- Current serious collection used neural teacher: policy_value_torch_192_blend_20260521-073435.
+- Teacher mode: policy/value neural beam search, width 3, depth 4.
+- Recent overnight collection produced 545,929 examples over 43 batches in about 14.25 hours.
+- Examples store encoded state vector, target value, teacher action index, legal action indices, side to move, winner, and half-turn count.
+
+Training backends:
+
+- Value model can train with Python, NumPy, or PyTorch.
+- Policy/value training uses PyTorch.
+- GPU training is available, but game simulation/search remains CPU-bound and is the main bottleneck.
+
+Evaluation and promotion
+
+Evaluation uses gauntlets:
+
+- Candidate plays paired-side games against random, default heuristic, trained heuristic, current champion/reference models, and other neural checkpoints.
+- Reports track wins, losses, draws, score rate, average half-turns, and model metadata.
+- There is a model registry used by the browser AI Lab dashboard.
+
+Promotion gate:
+
+- Candidate must beat the reference in head-to-head score rate, usually at least 55%.
+- Wilson lower bound must exceed 50%.
+- Overall score threshold is also used.
+- Current active reference from handoff notes is checkpoints/policy_value_torch_192_blend_20260521-073435.json.
+- Registry still lists older current champion as checkpoints/value_model_torch_128_shaped_1000_300hp.json, so there is some distinction between "official registry champion" and "current active reference/strongest model."
+
+Current issues / research questions
+
+Please compare this setup to how similar game-AI problems have historically been solved, especially small tactical board/card games with large legal action spaces and hidden randomness from shuffled decks. Suggest improvements in:
+
+- Whether the current imitation-plus-search loop should move toward AlphaZero-style policy/value self-play.
+- Better state/action encoding, including whether a board CNN/transformer would outperform the current flat MLP.
+- Handling large legal action spaces and action masking.
+- Improving search: beam search vs MCTS vs alpha-beta/expectimax-style methods.
+- Dealing with stochastic decks and partial observability, if hidden information should matter.
+- Data quality: teacher bias, diversity, exploration, deduplication, balancing positions, avoiding overfitting to one teacher.
+- Evaluation methodology: sample size, paired seeds, confidence intervals, promotion gates, Elo/rating systems.
+- Compute bottlenecks: batching inference inside search, parallel simulation, caching, faster engine representation.
+- Whether to train from self-play, expert iteration, population-based training, league training, or search-improved policy iteration.
+- Practical next steps that give the highest strength gain per engineering hour.
